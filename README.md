@@ -28,6 +28,12 @@ PROJEKT_INZYNIERSKI/
 
 ## Instrukcja Obsługi
 
+### 0. Pobranie bazy referencyjnej UNITE (Wymaganie wstępne)
+Aby system mógł rozpoznawać grzyby, musisz pobrać oficjalną bazę referencyjną ITS. 
+1. Wejdź na stronę [UNITE](https://unite.ut.ee/repository.php).
+2. Pobierz najnowszą bazę w formacie FASTA (zazwyczaj pakiet "SH general release").
+3. Rozpakuj pliki i umieść główny plik bazy (np. `sh_general_release_dynamic_19.02.2025.fasta`) w folderze `baza_ITS/`.
+
 ### 1. Budowa środowiska
 Zbuduj kontener Docker (wykonaj raz lub po jakiejkolwiek zmianie w pliku Dockerfile):
 ```bash
