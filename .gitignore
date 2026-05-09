@@ -1,0 +1,9 @@
+dane_surowe/
+dane_posrednie/
+baza_ITS/
+wyniki_kraken/
+wyniki_spoa_konsensus/
+wyniki_blast/
+
+.DS_Store
+__pycache__/
