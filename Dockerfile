@@ -1,12 +1,12 @@
-# Baza z Condą
+# Base image with Conda
 FROM continuumio/miniconda3:latest
 
-# Dodajemy oficjalne sklepy
+# Add official channels (bioconda and conda-forge)
 RUN conda config --add channels defaults && \
     conda config --add channels bioconda && \
     conda config --add channels conda-forge
 
-# Instalujemy narzędzia + WYMUSZAMY starszą wersję Pythona
+# Install bioinformatics tools + FORCE specific Python version
 RUN conda install -y python=3.10 \
     porechop_abi \
     cd-hit \
@@ -17,11 +17,10 @@ RUN conda install -y python=3.10 \
     seqtk \
     && conda clean -afy
 
-# Ustawiamy katalog roboczy
+# Install Python libraries for the Streamlit dashboard
+RUN pip install streamlit pandas plotly
+
+
 WORKDIR /data
 
-# Domyślne zachowanie
 CMD ["bash"]
-
-# Biblioteki python
-RUN pip install streamlit pandas plotly
