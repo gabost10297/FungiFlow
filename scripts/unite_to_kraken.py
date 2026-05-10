@@ -2,27 +2,27 @@ import sys
 import os
 
 if len(sys.argv) != 2:
-    print("BŁAD: Podaj plik wejściowy.")
+    print("ERROR: Please provide an input file.")
     sys.exit(1)
 
 input_fasta = sys.argv[1]
-out_fasta = "/data/baza_ITS/unite_kraken.fasta"
-out_dir = "/data/baza_ITS/taxonomy"
+out_fasta = "/data/database/unite_kraken.fasta"
+out_dir = "/data/database/taxonomy"
 os.makedirs(out_dir, exist_ok=True)
 
-print("Rozpoczynam tłumaczenie bazy UNITE na język Kraken2...")
+print("Starting translation of the UNITE database into Kraken2 format...")
 
 names_file = open(os.path.join(out_dir, "names.dmp"), "w")
 nodes_file = open(os.path.join(out_dir, "nodes.dmp"), "w")
 fasta_file = open(out_fasta, "w")
 
-# Root taksonomii
+# Taxonomy root
 nodes_file.write("1\t|\t1\t|\tno rank\t|\t\n")
 names_file.write("1\t|\troot\t|\t\t|\tscientific name\t|\n")
 
 tax_dict = {"root": 1}
 current_id = 2
-counter = 1 # Licznik dla unikalności ID
+counter = 1 # Counter for unique IDs
 
 rank_map = {'k': 'kingdom', 'p': 'phylum', 'c': 'class', 'o': 'order', 'f': 'family', 'g': 'genus', 's': 'species'}
 
@@ -30,9 +30,9 @@ with open(input_fasta, "r") as f:
     for line in f:
         if line.startswith(">"):
             header = line.strip()[1:]
-            # Wyciągamy pierwszy człon nazwy grzyba
+            # Extract the first part of the fungal name
             clean_name = header.replace('|', ' ').split()[0]
-            # Tworzymy unikalne ID dla Krakena
+            # Create a unique ID for Kraken
             seq_id = f"{clean_name}_{counter}"
             counter += 1
             
@@ -67,4 +67,4 @@ with open(input_fasta, "r") as f:
 names_file.close()
 nodes_file.close()
 fasta_file.close()
-print(f"SUKCES! Przygotowano {counter-1} sekwencji.")
+print(f"SUCCESS! Prepared {counter-1} sequences.")

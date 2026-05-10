@@ -1,81 +1,98 @@
-#  Potok Analizy ITS Grzybów (ITS Nanopore)
+# Fungal ITS Analysis Pipeline (Nanopore)
 
-Zautomatyzowany system do przetwarzania surowych odczytów z sekwencjonowania Nanopore, generowania wysokiej jakości sekwencji konsensusowych oraz ich precyzyjnej identyfikacji taksonomicznej przy użyciu referencyjnej bazy UNITE. Projekt zawiera interaktywny dashboard do wizualizacji i analizy wyników.
+An automated system for processing raw Nanopore sequencing reads, generating high-quality consensus sequences, and performing precise taxonomic identification using the UNITE reference database. The project includes an interactive dashboard for visualizing and analyzing the results.
 
-## Struktura Projektu
+## Prerequisites
+* **Docker Desktop** (with WSL 2 backend).
+* **WSL 2 Optimization:** For stable performance during clustering, create a `.wslconfig` file in your Windows user profile folder (`%USERPROFILE%\.wslconfig`) with the following settings:
+  ```ini
+  [wsl2]
+  memory=8GB
+  processors=6
+  swap=8GB
+  ```
 
-Zgodnie z obecną konfiguracją, projekt wykorzystuje poniższy układ katalogów:
+## Project Structure
+
+According to the current configuration, the project uses the following directory layout:
 
 ```text
-PROJEKT_INZYNIERSKI/
-├── .gitignore                  # Plik wykluczający duże dane z repozytorium GitHub
-├── Dockerfile                  # Definicja obrazu kontenera (biotools + Python/Streamlit)
-├── ITS_list.txt                # Lista pomocnicza
-├── baza_ITS/                   # Bazy UNITE, indeksy BLAST (unite_blast_db) oraz Kraken2
-├── dane_surowe/                # Wejściowe pliki .fastq.gz (np. barcode25.fastq.gz)
-├── dane_posrednie/             # Folder tymczasowy na klastry i pliki pośrednie
-├── skrypty/                    # Skrypty wykonawcze i analityczne
-│   ├── blast_app.py            # Aplikacja Streamlit do wizualizacji wyników
-│   ├── master_pipeline.sh      # Wersja testowa potoku
-│   ├── process_all.sh          # Główny potok przetwarzania danych dla wszystkich próbek
-│   ├── run_blast.sh            # Skrypt do lokalnej identyfikacji BLAST
-│   ├── unite_to_kraken.py      # Konwerter bazy UNITE do formatu Kraken2
-│   └── update_unite.sh         # Skrypt budowy/aktualizacji bazy Kraken2
-├── wyniki_blast/               # Wyniki identyfikacji w formacie .tsv
-├── wyniki_kraken/              # Raporty klasyfikacji Kraken2 (podzielone na próbki)
-└── wyniki_spoa_konsensus/      # Ostateczne sekwencje FASTA dla każdego klastra
+FungiFlow/
+├── .gitignore                  # File excluding large data from the GitHub repository
+├── Dockerfile                  # Container image definition (biotools + Python/Streamlit)
+├── ITS_list.txt                # Auxiliary reference list
+├── database/                   # UNITE databases, BLAST indices (unite_blast_db), and Kraken2
+│   └── .gitkeep                # Keeps the empty directory in Git
+├── raw_data/                   # Input .fastq.gz files (e.g., barcode25.fastq.gz)
+│   └── .gitkeep
+├── intermediate_data/          # Temporary folder for clusters and intermediate files
+│   └── .gitkeep
+├── tmp/                        # Temporary processing files
+│   └── .gitkeep
+├── scripts/                    # Execution and analysis scripts
+│   ├── blast_app.py            # Streamlit app for results visualization
+│   ├── process_all.sh          # Main data processing pipeline for all samples
+│   ├── run_blast.sh            # Script for local BLAST identification
+│   ├── unite_to_kraken.py      # UNITE to Kraken2 format converter
+│   └── update_unite.sh         # Kraken2 database build/update script
+├── blast_results/              # Identification results in .tsv format
+│   └── .gitkeep
+├── kraken_results/             # Kraken2 classification reports (separated by sample)
+│   └── .gitkeep
+└── consensus_results/          # Final FASTA sequences for each cluster
+    └── .gitkeep
 ```
 
-## Instrukcja Obsługi
+## User Guide
 
-### 0. Pobranie bazy referencyjnej UNITE (Wymaganie wstępne)
-Aby system mógł rozpoznawać grzyby, musisz pobrać oficjalną bazę referencyjną ITS. 
-1. Wejdź na stronę [UNITE](https://unite.ut.ee/repository.php).
-2. Pobierz najnowszą bazę w formacie FASTA (zazwyczaj pakiet "SH general release").
-3. Rozpakuj pliki i umieść główny plik bazy (np. `sh_general_release_dynamic_19.02.2025.fasta`) w folderze `baza_ITS/`.
+### 0. Download the UNITE Reference Database (Prerequisite)
+For the system to recognize fungi, you must download the official ITS reference database. 
+1. Go to the [UNITE repository](https://unite.ut.ee/repository.php).
+2. Download the latest database in FASTA format (usually the "SH general release" package).
+3. Extract the files and place the main database file (e.g., `sh_general_release_dynamic_19.02.2025.fasta`) in the `database/` folder.
 
-### 1. Budowa środowiska
-Zbuduj kontener Docker (wykonaj raz lub po jakiejkolwiek zmianie w pliku Dockerfile):
+### 1. Build the Environment
+Build the Docker container (run this once or after making any changes to the Dockerfile):
 ```bash
-docker build -t grzyby_pro .
+docker build -t fungal_pipeline .
 ```
 
-### 2. Przygotowanie bazy Kraken2 (Tylko za pierwszym razem)
-Zanim potok użyje Krakena2 do wstępnej klasyfikacji, baza UNITE musi zostać przekonwertowana i zbudowana. Uruchom dedykowany skrypt przygotowujący bazę:
+### 2. Prepare the Kraken2 Database (First time only)
+Before the pipeline uses Kraken2 for initial classification, the UNITE database must be converted and built. Run the dedicated setup script:
 ```bash
-docker run --rm -v ${PWD}:/data grzyby_pro bash /data/skrypty/update_unite.sh
+docker run --rm -v ${PWD}:/data fungal_pipeline bash /data/scripts/update_unite.sh
 ```
 
-### 3. Przygotowanie lokalnej bazy BLAST (Tylko za pierwszym razem)
-Zbuduj indeksy z pliku FASTA bazy UNITE dla precyzyjnego przyrównania końcowego:
+### 3. Prepare the Local BLAST Database (First time only)
+Build indices from the UNITE FASTA file for precise final alignment. Ensure this is run as a single continuous line in PowerShell:
 ```bash
-docker run --rm -v ${PWD}:/data grzyby_pro makeblastdb \
-  -in /data/baza_ITS/sh_general_release_dynamic_19.02.2025.fasta \
-  -dbtype nucl -out /data/baza_ITS/unite_blast_db
+docker run --rm -v ${PWD}:/data fungal_pipeline makeblastdb -in /data/database/sh_general_release_dynamic_19.02.2025.fasta -dbtype nucl -out /data/database/unite_blast_db
 ```
 
-### 4. Przetwarzanie surowych danych
-Uruchom główny potok dla wszystkich próbek w folderze `dane_surowe/`. Skrypt wykona wycinanie adapterów (Porechop), filtrację długości (>300bp), klastrowanie (CD-HIT na poziomie 98%), złoży sekwencje konsensusowe (SPOA) i dokona wstępnej taksonomii (Kraken2):
+### 4. Raw Data Processing
+Run the main pipeline for all samples located in the `raw_data/` folder. The script will perform adapter trimming (Porechop), length filtering (>300bp), clustering (CD-HIT at 98%), consensus assembly (SPOA), and initial taxonomy classification (Kraken2):
 ```bash
-docker run --rm -v ${PWD}:/data grzyby_pro bash /data/skrypty/process_all.sh
+docker run --rm -v ${PWD}:/data fungal_pipeline bash /data/scripts/process_all.sh
 ```
 
-### 5. Identyfikacja BLAST
-Uruchom dopasowanie wszystkich wygenerowanych konsensusów do bazy UNITE. Skrypt wygeneruje gotowe tabele `.tsv` w folderze `wyniki_blast/`:
+### 5. BLAST Identification
+Run the alignment of all generated consensuses against the UNITE database. The script will output ready-to-use `.tsv` tables in the `blast_results/` folder:
 ```bash
-docker run --rm -v ${PWD}:/data grzyby_pro bash /data/skrypty/run_blast.sh
+docker run --rm -v ${PWD}:/data fungal_pipeline bash /data/scripts/run_blast.sh
 ```
 
-### 6. Uruchomienie Dashboardu (Wizualizacja analityczna)
-Aby odpalić aplikację webową, która automatycznie przetwarza tabele i rysuje statystyki, uruchom kontener z otwartym portem sieciowym (8501):
+### 6. Launch the Dashboard (Analytical Visualization)
+To launch the web application that automatically processes the tables and plots statistics, run the container with an open network port (8501):
 ```bash
-docker run -it --rm -v ${PWD}:/data -p 8501:8501 grzyby_pro streamlit run /data/skrypty/blast_app.py
+docker run -it --rm -v ${PWD}:/data -p 8501:8501 fungal_pipeline streamlit run /data/scripts/blast_app.py
 ```
-Aplikacja będzie dostępna w przeglądarce internetowej pod adresem: **http://localhost:8501**
+The application will be accessible in your web browser at: **http://localhost:8501**
 
-## Kluczowe Metryki w Dashboardzie
-* **Percent Identity (pident):** Wskazuje na pewność taksonomiczną (przyjęto gatunek >97%, rodzaj >90%).
-* **E-value:** Statystyczna istotność dopasowania (im niższa wartość, zbliżona do zera, tym pewniejszy wynik).
-* **Top 1 Hit:** Wyczyszczona i podzielona systematyka z bazy UNITE (od Królestwa do Gatunku) dla najlepszego dopasowania każdego klastra.
+## Performance Tips
+* **OneDrive:** Always **pause OneDrive syncing** during analysis to prevent file locking and significant performance drops.
+* **Resources:** Ensure your WSL2 `.wslconfig` limits are properly configured to prevent memory crashes during clustering.
 
----
+## Key Metrics in the Dashboard
+* **Percent Identity (pident):** Indicates taxonomic certainty (assumed thresholds: species >97%, genus >90%).
+* **E-value:** Statistical significance of the match (the closer to zero, the more reliable the result).
+* **Top 1 Hit:** Cleaned and parsed UNITE taxonomy (from Kingdom to Species) for the best match of each cluster.
