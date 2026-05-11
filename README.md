@@ -25,6 +25,12 @@ FungiFlow/
 │   └── .gitkeep                # Keeps the empty directory in Git
 ├── raw_data/                   # Input .fastq.gz files (e.g., barcode25.fastq.gz)
 │   └── .gitkeep
+├── assets/                     # Dashboard visualization images
+│   ├── Blast_results_explorer_dark_theme.png
+│   ├── Blast_results_explorer_light_theme.png
+│   ├── Genus_distribution.png
+│   ├── Quality_metrics_all.png
+│   └── Quality_metrics_one.png
 ├── intermediate_data/          # Temporary folder for clusters and intermediate files
 │   └── .gitkeep
 ├── tmp/                        # Temporary processing files
@@ -96,3 +102,16 @@ The application will be accessible in your web browser at: **http://localhost:85
 * **Percent Identity (pident):** Indicates taxonomic certainty (assumed thresholds: species >97%, genus >90%).
 * **E-value:** Statistical significance of the match (the closer to zero, the more reliable the result).
 * **Top 1 Hit:** Cleaned and parsed UNITE taxonomy (from Kingdom to Species) for the best match of each cluster.
+
+---
+
+## Dashboard Previews
+
+### BLAST Results Explorer
+![BLAST Results Explorer Dark Theme](assets/Blast_results_explorer_dark_theme.png)
+![BLAST Results Explorer Light Theme](assets/Blast_results_explorer_light_theme.png)
+
+### Quality Metrics & Taxonomy Distribution
+![Quality Metrics](assets/Quality_metrics_all.png)
+![Quality Metrics One](assets/Quality_metrics_one.png)
+![Genus Distribution](assets/Genus_distribution.png)
