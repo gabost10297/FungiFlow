@@ -1,0 +1,175 @@
+/* --- 1. RADICAL STREAMLIT DATA EDITOR FIXES --- */
+
+/* Targets the core primary color variable specifically for the data editor component */
+[data-testid="stDataEditor"] {
+    --st-color-primary: #d3d3d3 !important;
+}
+
+/* Removes the thick red focus border from the container */
+[data-testid="stDataEditor"] div:focus-within {
+    border-color: #d3d3d3 !important;
+    box-shadow: none !important;
+}
+
+/* Hides the focus ring on the internal canvas */
+[data-testid="stDataEditor"] canvas {
+    outline: none !important;
+}
+
+/* Force hide any red selection borders inside the grid */
+.glideDataGrid-container {
+    --gdg-accent-color: #d3d3d3 !important;
+    --gdg-selection-outline: #d3d3d3 !important;
+}
+
+
+/* --- 2. ALIGNMENT VIEWER (MAFFT) --- */
+
+.aln-container {
+    font-family: 'Courier New', Courier, monospace;
+    white-space: nowrap;
+    overflow-x: auto;
+    font-size: 14px;
+    padding: 15px 0px; 
+    background-color: #ffffff;
+    border-radius: 4px;
+}
+
+.aln-pos, .aln-consensus, .aln-seq {
+    display: flex;
+    align-items: center;
+    width: max-content;
+    min-width: 100%;
+    margin-bottom: 2px;
+}
+
+.aln-pos { color: #888888; font-size: 12px; margin-bottom: 5px; }
+
+.aln-consensus {
+    margin-top: -5px;
+    margin-bottom: 12px;
+}
+
+.aln-bases {
+    display: inline-block;
+    padding-left: 20px; 
+    white-space: nowrap;
+}
+
+.aln-consensus .sticky-label, .aln-consensus .aln-bases {
+    padding-top: 14px !important;   
+    padding-bottom: 10px !important; 
+    border-bottom: 2px solid #eeeeee;
+}
+
+/* Nucleotide boxes */
+.base {
+    display: inline-block;
+    width: 14px !important;       
+    text-align: center;
+    color: white;
+    border-radius: 1px;
+    margin: 0 0.5px;   
+    flex-shrink: 0 !important;
+}
+
+/* Discreet gaps */
+.base.gap {
+    color: #e0e0e0 !important;
+    background-color: transparent !important;
+}
+
+/* Mutation identity dots */
+.base.match-dot {
+    color: #cccccc !important;
+    background-color: transparent !important;
+    font-weight: normal !important;
+}
+
+
+/* --- 3. SCROLLBARS & BUTTONS --- */
+
+.aln-container::-webkit-scrollbar {
+    height: 8px;
+}
+
+.aln-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+}
+
+.aln-container::-webkit-scrollbar-thumb {
+    background: #cccccc;
+    border-radius: 10px;
+}
+
+.aln-container::-webkit-scrollbar-thumb:hover {
+    background: #999999;
+}
+
+
+/* Style for the 'Update Alignment' button inside the form */
+button[kind="primaryFormSubmit"] {
+    background-color: #f0f2f6 !important;
+    color: #31333f !important;
+    border: 1px solid #d3d3d3 !important;
+}
+
+button[kind="primaryFormSubmit"]:hover {
+    background-color: #e0e2e6 !important;
+    border-color: #999999 !important;
+}
+
+strong {
+    color: #333333;
+}
+/* STICKY COLUMNS */
+.sticky-label {
+    position: sticky !important;
+    left: 0 !important;
+    z-index: 10 !important;
+    background-color: #ffffff !important; 
+    width: 350px !important;
+    flex-shrink: 0 !important; 
+    box-shadow: 4px 0 5px -2px rgba(0,0,0,0.1) !important; 
+    padding-left: 10px !important; 
+    display: flex !important;
+    align-items: center !important;
+    align-self: stretch !important;
+}
+
+/* COPYABLE SEQUENCE IDs */
+span.copyable-seq {
+    display: inline-block;
+    border: none !important;
+    box-shadow: none !important;
+    color: #333333 !important;
+    font-family: inherit !important;
+    font-size: inherit !important;
+    font-weight: bold !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    outline: none !important;
+    cursor: text !important;
+    
+    user-select: all !important;
+    -webkit-user-select: all !important;
+    caret-color: transparent !important;
+}
+
+span.copyable-seq:focus, span.copyable-seq:hover {
+    background-color: #f0f2f6 !important;
+    border-radius: 3px !important;
+}
+
+.base {
+    display: inline-block;
+    width: 14px;       
+    text-align: center;
+    color: white;
+    border-radius: 1px;
+    margin: 0 0.5px;   
+}
+
+.base.gap { color: #e0e0e0 !important; background-color: transparent !important; }
+.base.match-dot { color: #cccccc !important; background-color: transparent !important; font-weight: normal !important; }
