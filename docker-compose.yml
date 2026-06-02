@@ -1,0 +1,76 @@
+# FungiFlow — common Docker workflow
+# Usage (PowerShell, from repo root):
+#   docker compose run --rm shell
+#   docker compose run --rm process
+#   docker compose up dashboard
+
+name: fungiflow
+
+x-fungi: &fungi
+  image: ${IMAGE_NAME:-fungal_pipeline}
+  working_dir: /data
+  volumes:
+    - .:/data
+
+services:
+  # Interactive shell (ad-hoc commands, debugging)
+  shell:
+    <<: *fungi
+    stdin_open: true
+    tty: true
+    entrypoint: ["bash"]
+
+  # One-time / rare: build Kraken2 DB from UNITE archive in database/
+  setup-kraken:
+    <<: *fungi
+    profiles: ["setup"]
+    command: ["bash", "/data/scripts/update_unite.sh"]
+
+  # One-time / rare: build BLAST index (set UNITE_FASTA in .env)
+  setup-blast:
+    <<: *fungi
+    profiles: ["setup"]
+    command:
+      - makeblastdb
+      - -in
+      - /data/database/${UNITE_FASTA}
+      - -dbtype
+      - nucl
+      - -out
+      - /data/database/unite_blast_db
+
+  # Main pipeline (all samples in raw_data/)
+  process:
+    <<: *fungi
+    profiles: ["pipeline"]
+    command: ["bash", "/data/scripts/process_all.sh"]
+
+  # Single-sample dev loop (edit SAMPLE inside master_pipeline.sh)
+  process-one:
+    <<: *fungi
+    profiles: ["pipeline"]
+    command: ["bash", "/data/scripts/master_pipeline.sh"]
+
+  # BLAST all consensus FASTAs
+  blast:
+    <<: *fungi
+    profiles: ["pipeline"]
+    command: ["bash", "/data/scripts/run_blast.sh"]
+
+  # MAFFT alignment (if you use that module)
+  mafft:
+    <<: *fungi
+    profiles: ["pipeline"]
+    command: ["bash", "/data/scripts/run_mafft.sh"]
+
+  # Streamlit dashboard (full app: BLAST + MAFFT + IQ-TREE)
+  dashboard:
+    <<: *fungi
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    command:
+      - streamlit
+      - run
+      - /data/scripts/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501

@@ -1,32 +1,25 @@
-# Base image with Conda
-FROM continuumio/miniconda3:latest
+# syntax=docker/dockerfile:1
+FROM mambaorg/micromamba:1.5.10
 
-# Add official channels (bioconda and conda-forge)
-RUN conda config --add channels defaults && \
-    conda config --add channels bioconda && \
-    conda config --add channels conda-forge
+USER root
 
-# Install bioinformatics tools (DODANO trimal)
-RUN conda install -y python=3.10 \
-    porechop_abi \
-    cd-hit \
-    spoa \
-    vsearch \
-    kraken2 \
-    gawk \
-    seqtk \
-    mafft \
-    trimal \
-    iqtree \
-    r-base \
-    r-ggplot2 \
-    bioconductor-ggtree \
-    bioconductor-ggtreeextra \
-    && conda clean -afy
+RUN micromamba config append channels conda-forge && \
+    micromamba config append channels bioconda && \
+    micromamba config set channel_priority strict
 
-# Install Python libraries for the Streamlit dashboard
-RUN pip install --no-cache-dir streamlit pandas plotly
+RUN --mount=type=cache,target=/opt/conda/pkgs \
+    micromamba install -n base -y \
+      python=3.10 \
+      porechop_abi cd-hit spoa seqtk gawk \
+      kraken2 blast \
+      mafft trimal iqtree \
+      r-base r-ggplot2 bioconductor-ggtree bioconductor-ggtreeextra \
+    && micromamba clean -a -y
+
+RUN micromamba run -n base pip install --no-cache-dir \
+      "streamlit>=1.28,<2" \
+      "pandas>=2.0,<3" \
+      "plotly>=5.0,<6"
 
 WORKDIR /data
-
 CMD ["bash"]
