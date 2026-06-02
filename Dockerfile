@@ -6,7 +6,7 @@ RUN conda config --add channels defaults && \
     conda config --add channels bioconda && \
     conda config --add channels conda-forge
 
-# Install bioinformatics tools + FORCE Python version
+# Install bioinformatics tools (DODANO trimal)
 RUN conda install -y python=3.10 \
     porechop_abi \
     cd-hit \
@@ -16,10 +16,16 @@ RUN conda install -y python=3.10 \
     gawk \
     seqtk \
     mafft \
+    trimal \
+    iqtree \
+    r-base \
+    r-ggplot2 \
+    bioconductor-ggtree \
+    bioconductor-ggtreeextra \
     && conda clean -afy
 
 # Install Python libraries for the Streamlit dashboard
-RUN pip install streamlit pandas plotly
+RUN pip install --no-cache-dir streamlit pandas plotly
 
 WORKDIR /data
 

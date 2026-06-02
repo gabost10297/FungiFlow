@@ -4,6 +4,19 @@ from collections import Counter
 import re
 
 def show_mafft_page():
+
+    alignment_choice = st.radio(
+    "Select Alignment Version:",
+    ["Raw Alignment (MAFFT)", "Trimmed Alignment (trimAl)"],
+    horizontal=True,
+    help="Raw shows all sequenced bases and gaps. Trimmed shows only the high-quality columns used for building the phylogenetic tree."
+    )
+    
+    if alignment_choice == "Raw Alignment (MAFFT)":
+        fasta_path = "/data/intermediate_data/mafft_alignment.fasta"
+    else:
+        fasta_path = "/data/intermediate_data/mafft_alignment_trimmed.fasta"
+    
     st.title("Multiple Sequence Alignment (MAFFT)")
     st.info("Visual comparison of the generated consensus sequences. Use the list or basket below to select sequences.")
     
@@ -12,10 +25,9 @@ def show_mafft_page():
     if 'basket' not in st.session_state:
         st.session_state.basket = set()
     
-    mafft_path = "/data/intermediate_data/mafft_alignment.fasta"
     
-    if os.path.exists(mafft_path):
-        visualize_mafft_alignment(mafft_path)
+    if os.path.exists(fasta_path):
+        visualize_mafft_alignment(fasta_path)
     else:
         st.warning("The file mafft_alignment.fasta could not be found. Please ensure you have run the MAFFT script.")
 

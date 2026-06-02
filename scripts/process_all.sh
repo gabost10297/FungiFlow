@@ -12,6 +12,12 @@ for plik_full in /data/raw_data/*.fastq.gz; do
     # Extract just the name
     SAMPLE=$(basename "$plik_full" .fastq.gz)
     
+    if [ -d "/data/kraken_results/${SAMPLE}" ] && [ "$(ls -A /data/kraken_results/${SAMPLE})" ]; then
+        echo ">>> SKIPPING SAMPLE: ${SAMPLE} (Already processed) <<<"
+        continue
+    fi
+    # -------------------------------------------
+    
     echo ">>> PROCESSING SAMPLE: ${SAMPLE} <<<"
     
     # Separate subfolders for the specific sample
@@ -50,12 +56,9 @@ for plik_full in /data/raw_data/*.fastq.gz; do
             # COUNTING READS 
             nreads=$(grep -c "^>" "$f" | tr -d '\r\n[:space:]')
             
-            # If the variable is not empty and has 20 or more reads - consensus
             if [[ -n "$nreads" ]] && (( nreads >= 20 )); then
                 spoa "$f" > "/data/intermediate_data/temp_${SAMPLE}.fasta"
-                # Adds sample name to the header
                 sed -i "1s|^>.*|>cob_${SAMPLE}_${base}_consensus|" "/data/intermediate_data/temp_${SAMPLE}.fasta"
-                # Moves to the subfolder
                 mv "/data/intermediate_data/temp_${SAMPLE}.fasta" "/data/consensus_results/${SAMPLE}/${base}.fasta"
             fi
         fi

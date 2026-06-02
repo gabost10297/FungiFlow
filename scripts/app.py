@@ -6,6 +6,7 @@ st.set_page_config(page_title="FungiFlow Dashboard", layout="wide")
 
 from blast_app import show_blast_page
 from mafft_app import show_mafft_page
+from iqtree_app import show_iqtree_page
 
 st.sidebar.title("Navigation")
 st.sidebar.markdown("---")
@@ -13,7 +14,7 @@ st.sidebar.markdown("---")
 # Module choice
 page = st.sidebar.radio(
     "Choose analysis module: ", 
-    ["Identification (BLAST)", "Consensuses (MAFFT)"]
+    ["Identification (BLAST)", "Consensuses (MAFFT)", "Build IQ-Tree"]
 )
 st.sidebar.markdown("---")
 
@@ -21,6 +22,8 @@ if page == "Identification (BLAST)":
     show_blast_page()
 elif page == "Consensuses (MAFFT)":
     show_mafft_page()
+elif page == "Build IQ-Tree":
+    show_iqtree_page()
 
 def load_css():
     css_path = "/data/css/style.css"
