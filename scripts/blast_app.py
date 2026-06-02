@@ -82,5 +82,3 @@ def show_blast_page():
 
     st.subheader("Top 1 Matches")
     st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-show_blast_page()

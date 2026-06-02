@@ -1,0 +1,11 @@
+# Merge with: docker compose -f docker-compose.yml -f docker-compose.dev.yml up dashboard
+services:
+  dashboard:
+    command:
+      - streamlit
+      - run
+      - /data/scripts/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.runOnSave=true
+      - --server.fileWatcherType=poll
