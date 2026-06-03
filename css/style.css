@@ -1,38 +1,228 @@
-/* --- 1. RADICAL STREAMLIT DATA EDITOR FIXES --- */
+/* FungiFlow — high-contrast theme */
 
-/* Targets the core primary color variable specifically for the data editor component */
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap");
+
+:root {
+    --ff-text: #0a160a;
+    --ff-text-muted: #2d4a2d;
+    --ff-border: #5a7352;
+    --ff-surface: #ffffff;
+    --ff-bg: #e8ede5;
+}
+
+.stApp {
+    background: var(--ff-bg);
+    font-family: "DM Sans", system-ui, sans-serif;
+    color: var(--ff-text);
+}
+
+/* ========== MAIN AREA ========== */
+[data-testid="stMain"] p,
+[data-testid="stMain"] label,
+[data-testid="stMain"] span,
+[data-testid="stMain"] h1,
+[data-testid="stMain"] h2,
+[data-testid="stMain"] h3 {
+    color: var(--ff-text) !important;
+}
+
+[data-testid="stMain"] [data-testid="stCaptionContainer"],
+[data-testid="stMain"] .stCaption {
+    color: var(--ff-text-muted) !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: #052010 !important;
+    font-weight: 700 !important;
+}
+
+[data-testid="stMetricLabel"] {
+    color: var(--ff-text-muted) !important;
+    font-weight: 600 !important;
+}
+
+/* Multiselect tags — full text visible (fixes "gh", cut-off "fail") */
+[data-testid="stMain"] [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+    max-width: none !important;
+    min-width: fit-content !important;
+    overflow: visible !important;
+}
+
+[data-testid="stMain"] [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+    white-space: nowrap !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    padding: 0.2rem 0.55rem !important;
+}
+
+[data-testid="stMain"] [data-baseweb="input"] {
+    flex-wrap: wrap !important;
+    min-height: 3rem !important;
+}
+
+/* Bordered filter container */
+[data-testid="stMain"] [data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: var(--ff-border) !important;
+    background: var(--ff-surface) !important;
+}
+
+/* Tabs */
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    color: var(--ff-text-muted) !important;
+    font-weight: 600 !important;
+}
+
+[data-testid="stTabs"] [aria-selected="true"] {
+    color: #1b5e3b !important;
+}
+
+/* ========== SIDEBAR ========== */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0d2818 0%, #1b4332 100%) !important;
+}
+
+[data-testid="stSidebar"] .ff-brand-title {
+    color: #ffffff !important;
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+[data-testid="stSidebar"] .ff-brand-sub {
+    color: #d8f3dc !important;
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}
+
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+[data-testid="stSidebar"] label {
+    color: #f1faee !important;
+    font-weight: 600 !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stRadio"] label p {
+    color: #f1faee !important;
+}
+
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+    color: #c8e6c9 !important;
+}
+
+/* Sidebar metrics — bright numbers (fixes invisible 10) */
+[data-testid="stSidebar"] [data-testid="stMetricValue"] {
+    color: #ffffff !important;
+    font-size: 1.75rem !important;
+    font-weight: 700 !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stMetricLabel"] {
+    color: #d8f3dc !important;
+    font-weight: 600 !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stMetricDelta"] {
+    color: #b7e4c7 !important;
+}
+
+[data-testid="stSidebar"] hr {
+    border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* ========== Custom HTML blocks ========== */
+.ff-brand {
+    padding-bottom: 1rem;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.ff-page-hero {
+    background: var(--ff-surface);
+    border: 2px solid var(--ff-border);
+    border-radius: 12px;
+    padding: 1.2rem 1.4rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 12px rgba(10, 22, 10, 0.1);
+}
+
+.ff-page-hero h1 {
+    color: #052010 !important;
+    font-size: 1.65rem;
+    margin: 0 0 0.3rem 0;
+}
+
+.ff-page-hero p {
+    color: var(--ff-text-muted) !important;
+    margin: 0;
+    font-weight: 500;
+}
+
+
+.ff-overview-chart-hint {
+    min-height: 2.75rem;
+    margin: 0 0 0.35rem 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--ff-text-muted);
+    font-weight: 500;
+}
+
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+
+/* ========== MAFFT alignment ========== */
 [data-testid="stDataEditor"] {
-    --st-color-primary: #d3d3d3 !important;
+    --st-color-primary: #4a6741 !important;
 }
-
-/* Removes the thick red focus border from the container */
-[data-testid="stDataEditor"] div:focus-within {
-    border-color: #d3d3d3 !important;
-    box-shadow: none !important;
-}
-
-/* Hides the focus ring on the internal canvas */
-[data-testid="stDataEditor"] canvas {
-    outline: none !important;
-}
-
-/* Force hide any red selection borders inside the grid */
-.glideDataGrid-container {
-    --gdg-accent-color: #d3d3d3 !important;
-    --gdg-selection-outline: #d3d3d3 !important;
-}
-
-
-/* --- 2. ALIGNMENT VIEWER (MAFFT) --- */
 
 .aln-container {
-    font-family: 'Courier New', Courier, monospace;
+    font-family: "Courier New", monospace;
     white-space: nowrap;
     overflow-x: auto;
     font-size: 14px;
-    padding: 15px 0px; 
-    background-color: #ffffff;
-    border-radius: 4px;
+    padding: 15px 0;
+    background: #fff;
+    border: 1px solid var(--ff-border);
+    border-radius: 8px;
+}
+
+.aln-pos {
+    color: #3d4a3d !important;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.base.gap {
+    color: #5c6b5c !important;
+    background: #e8ece6 !important;
+}
+
+.base.match-dot {
+    color: #4a5a4a !important;
+    font-weight: 700 !important;
+}
+
+.sticky-label {
+    position: sticky !important;
+    left: 0 !important;
+    z-index: 10 !important;
+    background: #fff !important;
+    color: #0a160a !important;
+    font-weight: 600 !important;
+    width: 350px !important;
+    box-shadow: 4px 0 8px -2px rgba(0, 0, 0, 0.12) !important;
+}
+
+span.copyable-seq {
+    color: #0a160a !important;
+    font-weight: 700 !important;
+}
+
+.base {
+    width: 14px !important;
+    text-align: center;
+    color: #fff !important;
+    font-weight: 600;
 }
 
 .aln-pos, .aln-consensus, .aln-seq {
@@ -40,136 +230,20 @@
     align-items: center;
     width: max-content;
     min-width: 100%;
-    margin-bottom: 2px;
-}
-
-.aln-pos { color: #888888; font-size: 12px; margin-bottom: 5px; }
-
-.aln-consensus {
-    margin-top: -5px;
-    margin-bottom: 12px;
 }
 
 .aln-bases {
-    display: inline-block;
-    padding-left: 20px; 
+    padding-left: 20px;
     white-space: nowrap;
 }
 
-.aln-consensus .sticky-label, .aln-consensus .aln-bases {
-    padding-top: 14px !important;   
-    padding-bottom: 10px !important; 
-    border-bottom: 2px solid #eeeeee;
-}
-
-/* Nucleotide boxes */
-.base {
-    display: inline-block;
-    width: 14px !important;       
-    text-align: center;
-    color: white;
-    border-radius: 1px;
-    margin: 0 0.5px;   
-    flex-shrink: 0 !important;
-}
-
-/* Discreet gaps */
-.base.gap {
-    color: #e0e0e0 !important;
-    background-color: transparent !important;
-}
-
-/* Mutation identity dots */
-.base.match-dot {
-    color: #cccccc !important;
-    background-color: transparent !important;
-    font-weight: normal !important;
-}
-
-
-/* --- 3. SCROLLBARS & BUTTONS --- */
-
-.aln-container::-webkit-scrollbar {
-    height: 8px;
-}
-
-.aln-container::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 10px;
-}
-
-.aln-container::-webkit-scrollbar-thumb {
-    background: #cccccc;
-    border-radius: 10px;
-}
-
-.aln-container::-webkit-scrollbar-thumb:hover {
-    background: #999999;
-}
-
-
-/* Style for the 'Update Alignment' button inside the form */
 button[kind="primaryFormSubmit"] {
-    background-color: #f0f2f6 !important;
-    color: #31333f !important;
-    border: 1px solid #d3d3d3 !important;
-}
-
-button[kind="primaryFormSubmit"]:hover {
-    background-color: #e0e2e6 !important;
-    border-color: #999999 !important;
+    background: #e8ede5 !important;
+    color: #0a160a !important;
+    border: 2px solid var(--ff-border) !important;
+    font-weight: 600 !important;
 }
 
 strong {
-    color: #333333;
+    color: #052010 !important;
 }
-/* STICKY COLUMNS */
-.sticky-label {
-    position: sticky !important;
-    left: 0 !important;
-    z-index: 10 !important;
-    background-color: #ffffff !important; 
-    width: 350px !important;
-    flex-shrink: 0 !important; 
-    box-shadow: 4px 0 5px -2px rgba(0,0,0,0.1) !important; 
-    padding-left: 10px !important; 
-    display: flex !important;
-    align-items: center !important;
-    align-self: stretch !important;
-}
-
-/* COPYABLE SEQUENCE IDs */
-span.copyable-seq {
-    display: inline-block;
-    border: none !important;
-    box-shadow: none !important;
-    color: #333333 !important;
-    font-family: inherit !important;
-    font-size: inherit !important;
-    font-weight: bold !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    outline: none !important;
-    cursor: text !important;
-    
-    user-select: all !important;
-    -webkit-user-select: all !important;
-    caret-color: transparent !important;
-}
-
-span.copyable-seq:focus, span.copyable-seq:hover {
-    background-color: #f0f2f6 !important;
-    border-radius: 3px !important;
-}
-
-.base {
-    display: inline-block;
-    width: 14px;       
-    text-align: center;
-    color: white;
-    border-radius: 1px;
-    margin: 0 0.5px;   
-}
-
-.base.gap { color: #e0e0e0 !important; background-color: transparent !important; }
-.base.match-dot { color: #cccccc !important; background-color: transparent !important; font-weight: normal !important; }
