@@ -1,45 +1,124 @@
 #!/bin/bash
+set -euo pipefail
 
-# Variables
+# --- Config ---
 BLAST_DB="/data/database/unite_blast_db"
-THREADS=10
+THREADS="${BLAST_THREADS:-10}"
+MAX_TARGET_SEQS=5
+PERC_IDENTITY=90
+EVALUE_CUTOFF=1e-20
 
-echo "STARTING LOCAL BLAST SEARCH"
-echo "====================================================="
-
-# Main output directory
 mkdir -p /data/blast_results
 
-# Loop through each consensus folder
+echo "STARTING LOCAL BLAST SEARC"
+echo "====================================================="
+
 for sample_dir in /data/consensus_results/*; do
-    if [ -d "$sample_dir" ]; then
-        
-        # Extract the sample name
-        SAMPLE=$(basename "$sample_dir")
-        echo ">>> BLASTing sample: ${SAMPLE} <<<"
-        
-        # Create TSV output file for the given sample
-        OUT_FILE="/data/blast_results/${SAMPLE}_blast_summary.tsv"
-        
-        # Write headers to the table
-        echo -e "Cluster_Name\tReference_ID\tPercent_Identity\tAlignment_Length\tQuery_Coverage(%)\tE-value\tSpecies_Name" > "$OUT_FILE"
-        
-        # Run BLAST for each fasta file in the sample folder
-        for fasta in "$sample_dir"/*.fasta; do
-            if [ -f "$fasta" ]; then
-                
-                # Run local BLAST
-                # -max_target_seqs 1 -> Returns only the best match
-                # -outfmt "6 ..." -> Tabular format with selected columns
-                # 2> /dev/null -> Hides warnings
-                blastn -query "$fasta" -db "$BLAST_DB" \
-                       -outfmt "6 qseqid sseqid pident length qcovs evalue stitle" \
-                       -max_target_seqs 1 -num_threads $THREADS >> "$OUT_FILE" 2> /dev/null
-            fi
-        done
-        
-        echo "Done: ${SAMPLE}! Saved to ${OUT_FILE}"
-    fi
+    [[ -d "$sample_dir" ]] || continue
+
+    SAMPLE=$(basename "$sample_dir")
+    echo ">>> BLASTing sample: ${SAMPLE} <<<"
+
+    OUT_ALL="/data/blast_results/${SAMPLE}_blast_summary.tsv"
+    OUT_STRICT="/data/blast_results/${SAMPLE}_blast_summary_strict.tsv"
+
+    HEADER=$'Cluster_Name\tQuery_Length\tLength_Tier\tReference_ID\tPercent_Identity\tAlignment_Length\tQuery_Coverage(%)\tE-value\tBitscore\tTop2_Pident_Gap\tSpecies_Name\tConfidence\tAssigned_Level'
+    echo -e "$HEADER" > "$OUT_ALL"
+
+    for fasta in "$sample_dir"/*.fasta; do
+        [[ -f "$fasta" ]] || continue
+
+        CLUSTER=$(basename "$fasta" .fasta)
+
+        QUERY_LEN=$(grep -v '^>' "$fasta" | tr -d '\n' | wc -c)
+        if (( QUERY_LEN < 350 )); then
+            LENGTH_TIER="D"
+        elif (( QUERY_LEN < 400 )); then
+            LENGTH_TIER="C"
+        elif (( QUERY_LEN < 500 )); then
+            LENGTH_TIER="B"
+        elif (( QUERY_LEN <= 900 )); then
+            LENGTH_TIER="A"
+        else
+            LENGTH_TIER="LONG"
+        fi
+
+        TMP_BLAST=$(mktemp)
+        if ! blastn -query "$fasta" -db "$BLAST_DB" \
+            -task blastn \
+            -perc_identity "$PERC_IDENTITY" \
+            -evalue "$EVALUE_CUTOFF" \
+            -max_target_seqs "$MAX_TARGET_SEQS" \
+            -num_threads "$THREADS" \
+            -outfmt "6 qseqid sseqid pident length qcovs evalue bitscore stitle" \
+            -out "$TMP_BLAST" 2>/dev/null; then
+            :
+        fi
+
+        if [[ ! -s "$TMP_BLAST" ]]; then
+            echo -e "${CLUSTER}\t${QUERY_LEN}\t${LENGTH_TIER}\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tNA\tfail\tunassigned" >> "$OUT_ALL"
+            rm -f "$TMP_BLAST"
+            continue
+        fi
+
+        awk -v cluster="$CLUSTER" -v qlen="$QUERY_LEN" -v tier="$LENGTH_TIER" '
+        BEGIN { FS = OFS = "\t" }
+        NR == 1 {
+            ref = $2
+            p1 = $3 + 0
+            aln = $4 + 0
+            qcov = $5 + 0
+            eval = $6
+            bit = $7 + 0
+            title = $8
+            for (i = 9; i <= NF; i++) title = title " " $i
+        }
+        NR == 2 { p2 = $3 + 0 }
+        END {
+            gap = (NR >= 2 ? p1 - p2 : 100)
+            if (gap < 0) gap = 0
+
+            conf = "fail"
+            level = "unassigned"
+
+            if (tier == "LONG") {
+                conf = "review_long"
+                level = "manual_review"
+            } else if (tier == "A" && p1 >= 97 && qcov >= 85 && aln >= 400 && eval <= 1e-20 && gap >= 0.5) {
+                conf = "high"
+                level = "species"
+            } else if (tier == "B" && p1 >= 98 && qcov >= 90 && aln >= 350 && gap >= 0.5) {
+                conf = "medium"
+                level = "species"
+            } else if (tier == "C" && p1 >= 99 && qcov >= 92 && gap >= 1.0) {
+                conf = "low_species"
+                level = "species"
+            } else if (p1 >= 90 && qcov >= 75 && aln >= 200) {
+                conf = "genus_only"
+                level = "genus"
+            }
+
+            if (tier == "D" && level == "species") {
+                conf = "fail"
+                level = "genus"
+            }
+            if (gap < 0.5 && level == "species") {
+                conf = "ambiguous"
+                level = "genus"
+            }
+
+            print cluster, qlen, tier, ref, p1, aln, qcov, eval, bit, gap, title, conf, level
+        }' "$TMP_BLAST" >> "$OUT_ALL"
+
+        rm -f "$TMP_BLAST"
+    done
+
+    awk -F'\t' -v OFS='\t' 'NR==1 { print; next } $(NF-1)=="high" || $(NF-1)=="medium" { print }' \
+        "$OUT_ALL" > "$OUT_STRICT"
+
+    echo "Done: ${SAMPLE}"
+    echo "  All:    ${OUT_ALL}"
+    echo "  Strict: ${OUT_STRICT}"
 done
 
 echo "====================================================="
