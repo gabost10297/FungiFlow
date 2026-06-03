@@ -461,8 +461,10 @@ def show_blast_page():
             st.plotly_chart(build_quality_scatter(df), width="stretch")
 
     with tab_table:
-        st.caption(f"{len(df)} / {len(df_raw)} clusters")
-        if df.empty:
+        st.caption(
+            f"All {len(df_raw)} clusters (unfiltered) · scroll the table to browse rows and taxonomy"
+        )
+        if df_raw.empty:
             st.warning("No rows to display.")
         else:
             cols = [
@@ -480,15 +482,27 @@ def show_blast_page():
                     "Assigned_Level",
                     "Species_Name",
                 ]
-                if c in df.columns
+                if c in df_raw.columns
             ]
-            view = df[cols] if cols else df
+            view = df_raw[cols] if cols else df_raw
             cfg = {}
             if "Percent_Identity" in view.columns:
                 cfg["Percent_Identity"] = st.column_config.ProgressColumn(
                     "Identity %", min_value=0, max_value=100, format="%.1f%%"
                 )
-            st.dataframe(view, column_config=cfg, hide_index=True, width="stretch")
+            if "Species_Name" in view.columns:
+                cfg["Species_Name"] = st.column_config.TextColumn(
+                    "Species name",
+                    width=480,
+                    help="Scroll horizontally in the table to read the full hit string.",
+                )
+            st.dataframe(
+                view,
+                column_config=cfg,
+                hide_index=True,
+                width="stretch",
+                height=520,
+            )
 
     with tab_run:
         run_blast_panel()
