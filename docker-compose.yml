@@ -57,11 +57,11 @@ services:
     profiles: ["pipeline"]
     command: ["bash", "/data/scripts/run_blast.sh"]
 
-  # MAFFT alignment (if you use that module)
+  # MAFFT: BLAST-selected alignments (strict + full per barcode)
   mafft:
     <<: *fungi
     profiles: ["pipeline"]
-    command: ["bash", "/data/scripts/run_mafft.sh"]
+    command: ["bash", "/data/scripts/run_mafft.sh", "--all", "both"]
 
   # Streamlit dashboard (full app: BLAST + MAFFT + IQ-TREE)
   dashboard:
