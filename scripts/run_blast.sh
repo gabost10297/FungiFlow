@@ -10,7 +10,7 @@ EVALUE_CUTOFF=1e-20
 
 mkdir -p /data/blast_results
 
-echo "STARTING LOCAL BLAST SEARC"
+echo "STARTING LOCAL BLAST SEARCH"
 echo "====================================================="
 
 for sample_dir in /data/consensus_results/*; do
