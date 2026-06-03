@@ -1,3 +1,4 @@
+import shutil
 import streamlit as st
 import subprocess
 import os
@@ -9,6 +10,8 @@ def show_iqtree_page():
 
     r_script_path = "/data/scripts/plot_tree.R"
     intermediate_dir = "/data/intermediate_data"
+    mafft_dir = f"{intermediate_dir}/mafft"
+    mafft_script = "/data/scripts/run_mafft.sh"
 
     st.markdown("Tree Explorer & Viewer")
     
@@ -77,11 +80,21 @@ def show_iqtree_page():
     )
  
     selected_sample = ""
+    blast_set = "strict"
     if analysis_mode == "Single Sample Tree":
         if os.path.exists("/data/consensus_results"):
             samples = [d for d in os.listdir("/data/consensus_results") if os.path.isdir(os.path.join("/data/consensus_results", d))]
             if samples:
                 selected_sample = st.selectbox("Select Sample for local tree:", sorted(samples))
+                blast_set = st.radio(
+                    "BLAST sequence set (from MAFFT module)",
+                    options=["strict", "full"],
+                    format_func=lambda m: "Strict (high + medium)"
+                    if m == "strict"
+                    else "Full (all BLAST rows)",
+                    horizontal=True,
+                    key="iqtree_blast_set",
+                )
             else:
                 st.warning("No samples found.")
                 return
@@ -100,9 +113,9 @@ def show_iqtree_page():
         new_prefix = f"{intermediate_dir}/global_{run_suffix}"
         mafft_input = f"{intermediate_dir}/mafft_alignment.fasta"
     else:
-        new_prefix = f"{intermediate_dir}/sample_{selected_sample}_{run_suffix}"
-        combined_fasta = f"{intermediate_dir}/{selected_sample}_combined.fasta"
-        mafft_input = f"{intermediate_dir}/{selected_sample}_mafft.fasta"
+        new_prefix = f"{intermediate_dir}/sample_{selected_sample}_{blast_set}_{run_suffix}"
+        mafft_input = f"{mafft_dir}/{selected_sample}_{blast_set}_mafft.fasta"
+        mafft_trimmed = f"{mafft_dir}/{selected_sample}_{blast_set}_mafft_trimmed.fasta"
 
     new_trimmed_fasta = f"{new_prefix}_trimmed.fasta"
     new_tree_file = f"{new_prefix}_trimmed.fasta.treefile"
@@ -139,22 +152,38 @@ def show_iqtree_page():
             st.info(f"New output files will be saved as: `{os.path.basename(new_prefix)}...`")
             
             if st.button("Run Complete Pipeline", type="primary"):
-                
+                align_input = mafft_input
+
                 if analysis_mode == "Single Sample Tree":
-                    with st.spinner("Preparing local alignment..."):
-                        fasta_files = glob.glob(f"/data/consensus_results/{selected_sample}/*.fasta")
-                        if len(fasta_files) < 3:
-                            st.error("Need at least 3 sequences for a tree!")
-                            return
-                        with open(combined_fasta, 'w') as outfile:
-                            for fname in fasta_files:
-                                with open(fname) as infile: outfile.write(infile.read())
-                        with open(mafft_input, "w") as mafft_out:
-                            subprocess.run(["mafft", "--auto", combined_fasta], stdout=mafft_out, stderr=subprocess.STDOUT, check=True)
+                    if not os.path.exists(align_input) and not os.path.exists(mafft_trimmed):
+                        with st.spinner("Running BLAST-selected MAFFT..."):
+                            subprocess.run(
+                                ["bash", mafft_script, selected_sample, blast_set],
+                                check=False,
+                            )
+                    if os.path.exists(mafft_trimmed):
+                        align_input = mafft_trimmed
+                    elif not os.path.exists(align_input):
+                        st.error(
+                            f"No MAFFT output for {selected_sample} ({blast_set}). "
+                            "Run MAFFT on the Consensuses page first."
+                        )
+                        return
+                    n_seqs = sum(1 for line in open(align_input) if line.startswith(">"))
+                    if n_seqs < 3:
+                        st.error(f"Need at least 3 sequences for a tree (found {n_seqs}).")
+                        return
+
+                if not os.path.exists(align_input):
+                    st.error(f"Alignment not found: {align_input}")
+                    return
 
                 with st.spinner("1/3: Trimming with trimAl..."):
-                    trimal_cmd = ["trimal", "-in", mafft_input, "-out", new_trimmed_fasta, "-gappyout"]
-                    subprocess.run(trimal_cmd, check=True, capture_output=True)
+                    if align_input.endswith("_trimmed.fasta"):
+                        shutil.copy(align_input, new_trimmed_fasta)
+                    else:
+                        trimal_cmd = ["trimal", "-in", align_input, "-out", new_trimmed_fasta, "-gappyout"]
+                        subprocess.run(trimal_cmd, check=True, capture_output=True)
 
                 iqtree_cmd = [
                     "iqtree", 

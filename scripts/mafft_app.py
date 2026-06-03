@@ -1,35 +1,149 @@
-import streamlit as st
+import glob
 import os
-from collections import Counter
 import re
+import subprocess
+from collections import Counter
+
+import pandas as pd
+import streamlit as st
+
+MAFFT_DIR = "/data/intermediate_data/mafft"
+BLAST_DIR = "/data/blast_results"
+CONSENSUS_DIR = "/data/consensus_results"
+MAFFT_SCRIPT = "/data/scripts/run_mafft.sh"
+MANIFEST = f"{MAFFT_DIR}/manifest.tsv"
+
+
+def page_hero(title: str, subtitle: str):
+    st.markdown(
+        f'<div class="ff-page-hero"><h1>{title}</h1><p>{subtitle}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def list_blast_samples() -> list[str]:
+    paths = glob.glob(os.path.join(BLAST_DIR, "*_blast_summary.tsv"))
+    samples = []
+    for p in paths:
+        name = os.path.basename(p)
+        if name.endswith("_blast_summary.tsv") and "_strict" not in name:
+            samples.append(name.replace("_blast_summary.tsv", ""))
+    return sorted(set(samples))
+
+
+def blast_tsv_path(sample: str, mode: str) -> str:
+    if mode == "strict":
+        return os.path.join(BLAST_DIR, f"{sample}_blast_summary_strict.tsv")
+    return os.path.join(BLAST_DIR, f"{sample}_blast_summary.tsv")
+
+
+def alignment_paths(sample: str, mode: str) -> dict[str, str]:
+    return {
+        "raw": os.path.join(MAFFT_DIR, f"{sample}_{mode}_mafft.fasta"),
+        "trimmed": os.path.join(MAFFT_DIR, f"{sample}_{mode}_mafft_trimmed.fasta"),
+    }
+
+
+def count_tsv_clusters(tsv_path: str) -> int:
+    if not os.path.isfile(tsv_path):
+        return 0
+    with open(tsv_path, encoding="utf-8") as f:
+        return max(0, sum(1 for _ in f) - 1)
+
 
 def show_mafft_page():
-
-    alignment_choice = st.radio(
-    "Select Alignment Version:",
-    ["Raw Alignment (MAFFT)", "Trimmed Alignment (trimAl)"],
-    horizontal=True,
-    help="Raw shows all sequenced bases and gaps. Trimmed shows only the high-quality columns used for building the phylogenetic tree."
+    page_hero(
+        "Multiple Sequence Alignment (MAFFT)",
+        "Align consensuses chosen by BLAST — strict (high/medium) or full tables per barcode",
     )
-    
-    if alignment_choice == "Raw Alignment (MAFFT)":
-        fasta_path = "/data/intermediate_data/mafft_alignment.fasta"
-    else:
-        fasta_path = "/data/intermediate_data/mafft_alignment_trimmed.fasta"
-    
-    st.title("Multiple Sequence Alignment (MAFFT)")
-    st.info("Visual comparison of the generated consensus sequences. Use the list or basket below to select sequences.")
-    
-    if 'confirmed_seqs' not in st.session_state:
+
+    samples = list_blast_samples()
+    if not samples:
+        st.warning("No BLAST summaries in `blast_results/`. Run BLAST before MAFFT.")
+        return
+
+    if "confirmed_seqs" not in st.session_state:
         st.session_state.confirmed_seqs = []
-    if 'basket' not in st.session_state:
+    if "basket" not in st.session_state:
         st.session_state.basket = set()
-    
-    
+
+    top1, top2 = st.columns([2, 1])
+    with top1:
+        sample = st.selectbox("Sample (barcode)", samples, key="mafft_sample")
+        blast_mode = st.radio(
+            "BLAST sequence set",
+            options=["strict", "full"],
+            format_func=lambda m: "Strict (high + medium confidence)"
+            if m == "strict"
+            else "Full (all BLAST rows)",
+            horizontal=True,
+            key="mafft_blast_mode",
+        )
+    with top2:
+        tsv = blast_tsv_path(sample, blast_mode)
+        n_blast = count_tsv_clusters(tsv)
+        st.metric("Clusters in TSV", n_blast)
+        st.caption("strict" if blast_mode == "strict" else "full")
+
+    paths = alignment_paths(sample, blast_mode)
+    alignment_choice = st.radio(
+        "Alignment to view",
+        ["Raw (MAFFT)", "Trimmed (trimAl)"],
+        horizontal=True,
+        key="mafft_view_type",
+    )
+    fasta_path = paths["raw"] if alignment_choice.startswith("Raw") else paths["trimmed"]
+
+    with st.container(border=True):
+        st.markdown("**Run MAFFT**")
+        st.caption(
+            "Builds one alignment per barcode from clusters listed in the selected BLAST table. "
+            "Uses faster MAFFT settings for large sets (>200 / >1000 sequences)."
+        )
+        c1, c2, c3 = st.columns(3)
+        if c1.button("This sample only", type="primary", key="mafft_run_one"):
+            subprocess.run(
+                ["bash", MAFFT_SCRIPT, sample, blast_mode],
+                check=False,
+            )
+            st.rerun()
+        if c2.button("All samples (strict + full)", key="mafft_run_all"):
+            subprocess.run(["bash", MAFFT_SCRIPT, "--all", "both"], check=False)
+            st.rerun()
+        if c3.button("All samples (current set only)", key="mafft_run_all_mode"):
+            subprocess.run(
+                ["bash", MAFFT_SCRIPT, "--all", blast_mode],
+                check=False,
+            )
+            st.rerun()
+
+    if os.path.isfile(MANIFEST):
+        try:
+            manifest = pd.read_csv(MANIFEST, sep="\t")
+            row = manifest[
+                (manifest["sample"] == sample) & (manifest["mode"] == blast_mode)
+            ]
+            if not row.empty:
+                st.success(
+                    f"Latest run: **{int(row.iloc[-1]['n_seqs'])}** sequences aligned."
+                )
+        except Exception:
+            pass
+
+    st.markdown("---")
     if os.path.exists(fasta_path):
+        st.caption(f"Viewing `{os.path.basename(fasta_path)}`")
         visualize_mafft_alignment(fasta_path)
     else:
-        st.warning("The file mafft_alignment.fasta could not be found. Please ensure you have run the MAFFT script.")
+        st.info(
+            f"No alignment file yet at `{fasta_path}`. "
+            f"Run MAFFT above (needs ≥2 FASTAs matching the BLAST table)."
+        )
+        legacy = "/data/intermediate_data/mafft_alignment.fasta"
+        if os.path.exists(legacy):
+            with st.expander("Legacy global alignment (pre-BLAST MAFFT)"):
+                visualize_mafft_alignment(legacy)
+
 
 def visualize_mafft_alignment(alignment_fasta_path):
     colors = {
