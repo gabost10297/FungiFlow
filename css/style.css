@@ -218,6 +218,15 @@ span.copyable-seq {
     font-weight: 700 !important;
 }
 
+.mafft-row-label {
+    display: inline-block !important;
+    line-height: 1.25 !important;
+    font-size: 12px !important;
+    white-space: normal !important;
+    min-height: 1.25em;
+}
+
+
 .base {
     width: 14px !important;
     text-align: center;

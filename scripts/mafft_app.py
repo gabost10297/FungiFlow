@@ -1,20 +1,59 @@
 import glob
+import html
 import os
 import re
 import subprocess
 from collections import Counter
+from io import BytesIO, StringIO
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 MAFFT_DIR = "/data/intermediate_data/mafft"
 BLAST_DIR = "/data/blast_results"
 CONSENSUS_DIR = "/data/consensus_results"
 MAFFT_SCRIPT = "/data/scripts/run_mafft.sh"
+MAFFT_LOG = f"{MAFFT_DIR}/mafft_run.log"
+MAFFT_RUNNING_FLAG = f"{MAFFT_DIR}/mafft_running.flag"
 MANIFEST = f"{MAFFT_DIR}/manifest.tsv"
 
+PLOTLY_LAYOUT = dict(
+    template="plotly_white",
+    font=dict(color="#0a160a"),
+    colorway=["#1b4332", "#2d6a4f", "#40916c", "#52b788", "#74c69d", "#95d5b2"],
+)
 
-def page_hero(title: str, subtitle: str):
+LABEL_EXTRA_FIELDS = [
+    "Genus",
+    "Species",
+    "Confidence",
+    "Percent_Identity",
+    "Assigned_Level",
+]
+
+LABEL_FIELD_LABELS = {
+    "Cluster_Name": "Cluster",
+    "Genus": "Genus",
+    "Species": "Species",
+    "Confidence": "Confidence",
+    "Percent_Identity": "Identity %",
+    "Assigned_Level": "Assigned level",
+}
+
+SETS_DISPLAY_COLS = [
+    "Cluster_Name",
+    "Genus",
+    "Species",
+    "Percent_Identity",
+    "Confidence",
+    "Assigned_Level",
+    "Query_Length",
+    "Length_Tier",
+]
+
+
+def page_hero(title: str, subtitle: str) -> None:
     st.markdown(
         f'<div class="ff-page-hero"><h1>{title}</h1><p>{subtitle}</p></div>',
         unsafe_allow_html=True,
@@ -44,28 +83,729 @@ def alignment_paths(sample: str, mode: str) -> dict[str, str]:
     }
 
 
-def count_tsv_clusters(tsv_path: str) -> int:
+def selection_key(sample: str, mode: str) -> str:
+    return f"mafft_sel_{sample}_{mode}"
+
+
+def parse_taxonomy_from_species_name(tax_string) -> dict[str, str]:
+    """Extract genus/species from BLAST Species_Name (same logic as blast_app)."""
+    out: dict[str, str] = {}
+    if tax_string is None or (isinstance(tax_string, float) and pd.isna(tax_string)):
+        return out
+    try:
+        raw = str(tax_string).strip()
+        if not raw or raw.upper() == "NA":
+            return out
+        parts = raw.split("|")
+        tax_segment = parts[-1] if len(parts) > 1 else raw
+        for rank in tax_segment.split(";"):
+            if "__" not in rank:
+                continue
+            lvl, val = rank.split("__", 1)
+            val = val.strip()
+            if not val:
+                continue
+            if lvl == "g":
+                out["Genus"] = val
+            elif lvl == "s":
+                out["Species"] = val.replace("_", " ")
+        if "Genus" not in out and parts and parts[0] not in ("", "NA"):
+            token = parts[0].strip()
+            if "_" in token:
+                out["Genus"] = token.split("_")[0]
+                rest = token.split("_", 1)[1]
+                if rest and "Species" not in out:
+                    out["Species"] = rest.replace("_", " ")
+            elif token:
+                out["Genus"] = token
+    except Exception:
+        pass
+    return out
+
+
+def enrich_blast_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Add Genus/Species from Species_Name (raw BLAST TSV has no separate columns)."""
+    if df.empty or "Species_Name" not in df.columns:
+        return df
+
+    parsed_rows = df["Species_Name"].apply(parse_taxonomy_from_species_name)
+    parsed = pd.DataFrame(list(parsed_rows))
+
+    for col in ("Genus", "Species"):
+        if col not in parsed.columns:
+            continue
+        if col not in df.columns:
+            df[col] = parsed[col]
+        else:
+            empty = df[col].isna() | (df[col].astype(str).str.strip() == "")
+            df.loc[empty, col] = parsed.loc[empty, col]
+
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def load_blast_table(tsv_path: str, mtime: float) -> pd.DataFrame:
+    del mtime  # cache bust when file changes
     if not os.path.isfile(tsv_path):
-        return 0
-    with open(tsv_path, encoding="utf-8") as f:
-        return max(0, sum(1 for _ in f) - 1)
+        return pd.DataFrame()
+    df = pd.read_csv(tsv_path, sep="\t")
+    return enrich_blast_dataframe(df)
 
 
-def show_mafft_page():
+@st.cache_data(show_spinner=False)
+def load_alignment(fasta_path: str, mtime: float) -> dict[str, str]:
+    del mtime
+    sequences: dict[str, str] = {}
+    current = ""
+    with open(fasta_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(">"):
+                current = line[1:].strip()
+                sequences[current] = ""
+            elif current:
+                sequences[current] += line.upper()
+    return sequences
+
+
+def default_cluster_selection(df: pd.DataFrame, mode: str) -> list[str]:
+    if df.empty or "Cluster_Name" not in df.columns:
+        return []
+    if "Confidence" in df.columns:
+        conf = df["Confidence"].astype(str)
+        if mode == "strict":
+            pick = df[conf.isin(["high", "medium"])]["Cluster_Name"]
+        else:
+            pick = df[~conf.isin(["fail"])]["Cluster_Name"]
+        ids = pick.astype(str).tolist()
+        if ids:
+            return ids
+    return df["Cluster_Name"].astype(str).head(min(20, len(df))).tolist()
+
+
+def preflight_stats(sample: str, mode: str) -> dict:
+    tsv = blast_tsv_path(sample, mode)
+    consensus_dir = os.path.join(CONSENSUS_DIR, sample)
+    n_tsv = 0
+    n_fasta = 0
+    n_missing = 0
+
+    if os.path.isfile(tsv):
+        df = load_blast_table(tsv, os.path.getmtime(tsv))
+        if not df.empty and "Cluster_Name" in df.columns:
+            clusters = df["Cluster_Name"].astype(str).tolist()
+            n_tsv = len(clusters)
+            for cluster in clusters:
+                if os.path.isfile(os.path.join(consensus_dir, f"{cluster}.fasta")):
+                    n_fasta += 1
+                else:
+                    n_missing += 1
+
+    paths = alignment_paths(sample, mode)
+    return {
+        "n_tsv": n_tsv,
+        "n_fasta": n_fasta,
+        "n_missing": n_missing,
+        "has_raw": os.path.isfile(paths["raw"]),
+        "has_trimmed": os.path.isfile(paths["trimmed"]),
+    }
+
+
+def mafft_is_running() -> bool:
+    return os.path.isfile(MAFFT_RUNNING_FLAG)
+
+
+def read_log_tail(n: int = 20) -> str:
+    if not os.path.isfile(MAFFT_LOG):
+        return ""
+    try:
+        with open(MAFFT_LOG, encoding="utf-8", errors="replace") as f:
+            return "".join(f.readlines()[-n:])
+    except OSError:
+        return ""
+
+
+def launch_mafft(args: list[str]) -> None:
+    os.makedirs(MAFFT_DIR, exist_ok=True)
+    with open(MAFFT_RUNNING_FLAG, "w", encoding="utf-8") as f:
+        f.write("running\n")
+    shell_cmd = (
+        f"bash {MAFFT_SCRIPT} {' '.join(args)} >> {MAFFT_LOG} 2>&1; "
+        f"rm -f {MAFFT_RUNNING_FLAG}"
+    )
+    with open(MAFFT_LOG, "w", encoding="utf-8") as log:
+        log.write(f"$ {shell_cmd}\n\n")
+    subprocess.Popen(
+        ["bash", "-c", shell_cmd],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    load_blast_table.clear()
+    load_alignment.clear()
+
+
+def load_manifest() -> pd.DataFrame:
+    if not os.path.isfile(MANIFEST):
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(MANIFEST, sep="\t")
+    except (pd.errors.ParserError, OSError, ValueError):
+        return pd.DataFrame()
+
+
+def alignment_fasta_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def subset_fasta_bytes(sequences: dict[str, str], selected: list[str]) -> bytes:
+    buf = StringIO()
+    for seq_id in selected:
+        if seq_id not in sequences:
+            continue
+        buf.write(f">{seq_id}\n")
+        buf.write(sequences[seq_id])
+        buf.write("\n")
+    return buf.getvalue().encode("utf-8")
+
+
+def render_run_tab(sample: str, mode: str) -> None:
+    stats = preflight_stats(sample, mode)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Clusters in TSV", stats["n_tsv"])
+    c2.metric("FASTAs found", stats["n_fasta"])
+    c3.metric("Missing FASTA", stats["n_missing"])
+    c4.metric("Ready for MAFFT", "Yes" if stats["n_fasta"] >= 2 else "No")
+
+    if stats["n_fasta"] < 2:
+        st.warning("Need at least 2 consensus FASTAs matching the BLAST table.")
+
+    if mafft_is_running():
+        st.warning("MAFFT is running in the background.")
+        if st.button("Refresh status", key="mafft_refresh_running"):
+            st.rerun()
+        st.markdown("**Log (last lines)**")
+        st.code(read_log_tail(25) or "(empty)", language="log")
+        return
+
+    st.caption(
+        "Aligns clusters listed in the selected BLAST table. "
+        "Uses faster MAFFT settings for large sets (>200 / >1000 sequences)."
+    )
+
+    b1, b2, b3 = st.columns(3)
+    if b1.button("This sample only", type="primary", key="mafft_run_one"):
+        launch_mafft([sample, mode])
+        st.rerun()
+    if b2.button("All samples (strict + full)", key="mafft_run_all"):
+        launch_mafft(["--all", "both"])
+        st.rerun()
+    if b3.button("All samples (current set only)", key="mafft_run_all_mode"):
+        launch_mafft(["--all", mode])
+        st.rerun()
+
+    manifest = load_manifest()
+    if not manifest.empty:
+        st.markdown("**Recent MAFFT runs**")
+        st.dataframe(manifest, hide_index=True, width="stretch")
+
+    with st.expander("Full log", expanded=False):
+        st.code(read_log_tail(80) or "No log yet.", language="log")
+
+
+def render_sets_tab(sample: str, mode: str, df: pd.DataFrame) -> list[str]:
+    sel_key = selection_key(sample, mode)
+
+    if df.empty:
+        st.warning("BLAST table is empty or missing.")
+        return []
+
+    if sel_key not in st.session_state:
+        st.session_state[sel_key] = default_cluster_selection(df, mode)
+
+
+    with st.container(border=True):
+        st.markdown("**Filter clusters**")
+        f1, f2, f3 = st.columns(3)
+        view = df.copy()
+        if "Genus" in view.columns:
+            genera = ["(all)"] + sorted(view["Genus"].dropna().astype(str).unique().tolist())
+            genus_pick = f1.selectbox("Genus", genera, key=f"mafft_sets_genus_{sample}_{mode}")
+            if genus_pick != "(all)":
+                view = view[view["Genus"].astype(str) == genus_pick]
+        if "Confidence" in view.columns:
+            conf_opts = sorted(view["Confidence"].dropna().astype(str).unique().tolist())
+            conf_pick = f2.multiselect(
+                "Confidence",
+                conf_opts,
+                default=conf_opts,
+                key=f"mafft_sets_conf_{sample}_{mode}",
+            )
+            if conf_pick:
+                view = view[view["Confidence"].astype(str).isin(conf_pick)]
+        if "Percent_Identity" in view.columns:
+            min_pid = f3.slider(
+                "Min. identity %",
+                0.0,
+                100.0,
+                0.0,
+                0.5,
+                key=f"mafft_sets_pid_{sample}_{mode}",
+            )
+            view = view[view["Percent_Identity"] >= min_pid]
+
+        show_cols = [c for c in SETS_DISPLAY_COLS if c in view.columns]
+        st.caption(f"{len(view)} / {len(df)} clusters after filters")
+        st.dataframe(view[show_cols] if show_cols else view, hide_index=True, width="stretch")
+
+    options = df["Cluster_Name"].astype(str).tolist()
+    valid_defaults = [x for x in st.session_state.get(sel_key, []) if x in options]
+
+    c1, c2 = st.columns(2)
+    if c1.button("Select high + medium", key=f"mafft_pick_hm_{sample}_{mode}"):
+        st.session_state[sel_key] = default_cluster_selection(df, "strict")
+        st.rerun()
+    if c2.button("Select all in table", key=f"mafft_pick_all_{sample}_{mode}"):
+        st.session_state[sel_key] = options
+        st.rerun()
+
+    selected = st.multiselect(
+        "Clusters to show in alignment viewer",
+        options=options,
+        default=valid_defaults,
+        key=f"mafft_multiselect_{sample}_{mode}",
+    )
+    st.session_state[sel_key] = selected
+    st.info(f"**{len(selected)}** sequences selected for the View tab.")
+    return selected
+
+
+
+
+def cluster_metadata_lookup(sample: str, mode: str) -> dict[str, dict]:
+    """Map Cluster_Name -> BLAST row for alignment row labels."""
+    tsv = blast_tsv_path(sample, mode)
+    if not os.path.isfile(tsv):
+        return {}
+    df = load_blast_table(tsv, os.path.getmtime(tsv))
+    if df.empty or "Cluster_Name" not in df.columns:
+        return {}
+    lookup: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        cid = str(row["Cluster_Name"]).strip()
+        meta = row.to_dict()
+        for key, val in parse_taxonomy_from_species_name(meta.get("Species_Name")).items():
+            if key not in meta or pd.isna(meta.get(key)) or not str(meta.get(key)).strip():
+                meta[key] = val
+        lookup[cid] = meta
+        if cid.isdigit():
+            lookup[str(int(cid))] = meta
+    return lookup
+
+
+def resolve_cluster_meta(seq_id: str, meta_by_cluster: dict[str, dict]) -> dict | None:
+    """Match alignment FASTA headers to BLAST Cluster_Name."""
+    sid = str(seq_id).strip()
+    if sid in meta_by_cluster:
+        return meta_by_cluster[sid]
+    for key, row in meta_by_cluster.items():
+        if str(key).strip() == sid:
+            return row
+        if sid.endswith(str(key)) or str(key).endswith(sid):
+            return row
+    if sid.isdigit():
+        alt = str(int(sid))
+        if alt in meta_by_cluster:
+            return meta_by_cluster[alt]
+    return None
+
+
+def format_row_label(
+    cluster_id: str,
+    meta: dict | None,
+    fields: list[str],
+) -> tuple[str, str]:
+    """HTML display (may include <br>) and tooltip title."""
+    lines: list[str] = []
+    for field in fields:
+        if field == "Cluster_Name":
+            lines.append(html.escape(str(cluster_id)))
+            continue
+        if not meta or field not in meta or pd.isna(meta[field]):
+            continue
+        val = meta[field]
+        if field == "Percent_Identity":
+            try:
+                lines.append(html.escape(f"{float(val):.1f}%"))
+            except (TypeError, ValueError):
+                lines.append(html.escape(str(val)))
+        else:
+            s = str(val).strip()
+            if s:
+                lines.append(html.escape(s))
+
+    if not lines:
+        lines.append(html.escape(str(cluster_id)))
+
+    display = "<br>".join(lines)
+    tip_parts = [f"Cluster: {cluster_id}"]
+    if meta:
+        for key, label in LABEL_FIELD_LABELS.items():
+            if key == "Cluster_Name" or key not in meta or pd.isna(meta[key]):
+                continue
+            val = str(meta[key]).strip()
+            if val:
+                tip_parts.append(f"{label}: {val}")
+        if "Species_Name" in meta and pd.notna(meta["Species_Name"]):
+            raw = str(meta["Species_Name"]).strip()
+            if raw and raw.upper() != "NA":
+                tip_parts.append(f"Hit: {raw[:120]}{'…' if len(raw) > 120 else ''}")
+    return display, html.escape(" · ".join(tip_parts))
+
+
+def render_view_tab(
+    fasta_path: str,
+    selected: list[str],
+    sample: str,
+    mode: str,
+) -> None:
+    if not os.path.isfile(fasta_path):
+        st.info(
+            f"No alignment at `{fasta_path}`. Run MAFFT on the **Run** tab first (needs ≥2 sequences)."
+        )
+        legacy = "/data/intermediate_data/mafft_alignment.fasta"
+        if os.path.exists(legacy):
+            with st.expander("Legacy global alignment"):
+                sequences = load_alignment(legacy, os.path.getmtime(legacy))
+                visualize_mafft_alignment(sequences, list(sequences.keys())[:15], None, ['Cluster_Name'])
+        return
+
+    if not selected:
+        st.warning("No sequences selected. Pick clusters on the **Sequence sets** tab.")
+        return
+
+    mtime = os.path.getmtime(fasta_path)
+    sequences = load_alignment(fasta_path, mtime)
+    in_aln = [s for s in selected if s in sequences]
+    missing = [s for s in selected if s not in sequences]
+
+    if missing:
+        st.caption(f"{len(missing)} selected IDs not in this alignment (run MAFFT again if the BLAST set changed).")
+
+    st.caption(f"`{os.path.basename(fasta_path)}` · showing **{len(in_aln)}** sequences")
+
+    dl1, dl2 = st.columns(2)
+    with dl1:
+        st.download_button(
+            "Download full alignment",
+            alignment_fasta_bytes(fasta_path),
+            file_name=os.path.basename(fasta_path),
+            mime="text/plain",
+            width="stretch",
+        )
+    with dl2:
+        if in_aln:
+            st.download_button(
+                "Download selected subset (FASTA)",
+                subset_fasta_bytes(sequences, in_aln),
+                file_name=f"{sample}_{mode}_subset.fasta",
+                mime="text/plain",
+                width="stretch",
+            )
+
+    meta_lookup = cluster_metadata_lookup(sample, mode)
+    extra_labels = st.multiselect(
+        "Also show in row labels (with cluster ID)",
+        options=LABEL_EXTRA_FIELDS,
+        default=["Genus", "Species"],
+        format_func=lambda f: LABEL_FIELD_LABELS.get(f, f),
+        key=f"mafft_view_label_fields_{sample}_{mode}",
+        help="Shown in the fixed left column next to each sequence.",
+    )
+    label_fields = ["Cluster_Name"] + [f for f in extra_labels if f in LABEL_EXTRA_FIELDS]
+
+    visualize_mafft_alignment(sequences, in_aln, meta_lookup, label_fields)
+
+
+def visualize_mafft_alignment(
+    sequences: dict[str, str],
+    selected_seqs: list[str],
+    meta_by_cluster: dict[str, dict] | None = None,
+    label_fields: list[str] | None = None,
+) -> None:
+    colors = {
+        "A": "#9F1B12",
+        "T": "#13781b",
+        "C": "#3c82d8",
+        "G": "#dea023",
+        "N": "#7A7A7A",
+    }
+
+    if not sequences:
+        st.error("The alignment is empty.")
+        return
+
+    selected_seqs = [s for s in selected_seqs if s in sequences]
+    if not selected_seqs:
+        st.warning("No sequences to display.")
+        return
+
+    aln_length = max(len(sequences[s]) for s in selected_seqs)
+
+    ctrl1, ctrl2 = st.columns([1, 1])
+    with ctrl1:
+        default_window = min(500, aln_length)
+        start_pos, end_pos = st.slider(
+            "Alignment region (bp)",
+            1,
+            aln_length,
+            (1, default_window),
+            key="mafft_view_window",
+        )
+    with ctrl2:
+        highlight_mutations = st.checkbox(
+            "Highlight mutations only",
+            value=True,
+            key="mafft_highlight_mut",
+        )
+        st.caption(f"Alignment length: **{aln_length}** bp")
+
+    window_seqs = [sequences[s][start_pos - 1 : end_pos] for s in selected_seqs]
+    consensus_slice = ""
+    for i in range(end_pos - start_pos + 1):
+        col_bases = [s[i] for s in window_seqs if i < len(s)]
+        if not col_bases:
+            consensus_slice += "-"
+        else:
+            consensus_slice += Counter(col_bases).most_common(1)[0][0]
+
+    html_out = "<div class='aln-container'>"
+    if label_fields is None:
+        label_fields = ["Cluster_Name"]
+    if meta_by_cluster is None:
+        meta_by_cluster = {}
+
+    label_header = "Labels"
+    if len(label_fields) > 1:
+        label_header = "Cluster · " + " · ".join(
+            LABEL_FIELD_LABELS.get(f, f) for f in label_fields if f != "Cluster_Name"
+        )
+
+    html_out += (
+        f"<div class='aln-pos'><strong class='sticky-label'>"
+        f"{html.escape(label_header)}</strong> [{start_pos} ... {end_pos}]</div>"
+    )
+    html_out += (
+        "<div class='aln-consensus'><strong class='sticky-label'>CONSENSUS</strong> "
+    )
+    for char in consensus_slice:
+        cls = "base gap" if char == "-" else "base"
+        style = (
+            f"style='background-color: {colors.get(char, '#ffffff')}; font-weight: bold;'"
+            if char != "-"
+            else ""
+        )
+        html_out += f"<span class='{cls}' {style}>{char}</span>"
+    html_out += "</div>"
+
+    for seq_id in selected_seqs:
+        seq_slice = sequences[seq_id][start_pos - 1 : end_pos]
+        meta = resolve_cluster_meta(seq_id, meta_by_cluster)
+        display_label, tip = format_row_label(seq_id, meta, label_fields)
+        html_out += (
+            f"<div class='aln-seq'><span class='copyable-seq sticky-label mafft-row-label' "
+            f"contenteditable='true' spellcheck='false' title='{tip}'>"
+            f"{display_label}</span> "
+        )
+        for i, char in enumerate(seq_slice):
+            if char == "-":
+                html_out += "<span class='base gap'>-</span>"
+            elif highlight_mutations and i < len(consensus_slice) and char == consensus_slice[i]:
+                html_out += "<span class='base match-dot'>.</span>"
+            else:
+                html_out += (
+                    f"<span class='base' style='background-color: {colors.get(char, '#ffffff')};'>"
+                    f"{char}</span>"
+                )
+        html_out += "</div>"
+
+    html_out += "</div>"
+    with st.container(border=True):
+        st.markdown(html_out, unsafe_allow_html=True)
+
+
+
+
+def barcode_summary_row(sample: str, mode: str) -> dict:
+    """One row of cross-barcode comparison metrics."""
+    stats = preflight_stats(sample, mode)
+    row: dict = {
+        "Barcode": sample,
+        "Clusters": stats["n_tsv"],
+        "FASTAs found": stats["n_fasta"],
+        "Missing FASTA": stats["n_missing"],
+        "MAFFT raw": "yes" if stats["has_raw"] else "—",
+        "MAFFT trimmed": "yes" if stats["has_trimmed"] else "—",
+    }
+    tsv = blast_tsv_path(sample, mode)
+    if not os.path.isfile(tsv):
+        return row
+
+    df = load_blast_table(tsv, os.path.getmtime(tsv))
+    if df.empty:
+        return row
+
+    if "Genus" in df.columns:
+        row["Genera"] = int(df["Genus"].nunique())
+    if "Percent_Identity" in df.columns:
+        row["Mean identity %"] = round(float(df["Percent_Identity"].mean()), 1)
+    if "Confidence" in df.columns:
+        conf = df["Confidence"].astype(str)
+        row["High + medium"] = int(conf.isin(["high", "medium"]).sum())
+        row["Genus-only"] = int(conf.eq("genus_only").sum())
+        row["Fail"] = int(conf.eq("fail").sum())
+    return row
+
+
+def genus_sets_by_barcode(samples: list[str], mode: str) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for sample in samples:
+        tsv = blast_tsv_path(sample, mode)
+        if not os.path.isfile(tsv):
+            continue
+        df = load_blast_table(tsv, os.path.getmtime(tsv))
+        if df.empty or "Genus" not in df.columns:
+            continue
+        out[sample] = set(df["Genus"].dropna().astype(str))
+    return out
+
+
+def render_compare_tab(all_samples: list[str]) -> None:
+    st.caption(
+        "Compare cluster counts, MAFFT status, and genus composition across barcodes "
+        "(same BLAST strict/full set for each)."
+    )
+
+    default_pick = all_samples[: min(4, len(all_samples))]
+    picked = st.multiselect(
+        "Barcodes to compare",
+        all_samples,
+        default=default_pick,
+        key="mafft_compare_samples",
+    )
+    if len(picked) < 2:
+        st.info("Select at least **2 barcodes** to compare.")
+        return
+
+    cmp_mode = st.radio(
+        "BLAST set for comparison",
+        options=["strict", "full"],
+        format_func=lambda m: "Strict (high + medium)"
+        if m == "strict"
+        else "Full (all BLAST rows)",
+        horizontal=True,
+        key="mafft_compare_mode",
+    )
+
+    summary = pd.DataFrame([barcode_summary_row(s, cmp_mode) for s in picked])
+    st.markdown("**Summary**")
+    st.dataframe(summary, hide_index=True, width="stretch")
+
+    genus_sets = genus_sets_by_barcode(picked, cmp_mode)
+    if not genus_sets:
+        st.warning("No genus data available for the selected barcodes.")
+        return
+
+    shared = set.intersection(*genus_sets.values()) if len(genus_sets) > 1 else set()
+    union = set.union(*genus_sets.values())
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Barcodes compared", len(picked))
+    m2.metric("Shared genera", len(shared))
+    m3.metric("Total unique genera", len(union))
+
+    if shared:
+        shown = sorted(shared)[:40]
+        extra = len(shared) - len(shown)
+        suffix = f" … +{extra} more" if extra > 0 else ""
+        st.markdown(f"**In all barcodes:** {', '.join(shown)}{suffix}")
+
+    with st.expander("Genera unique to one barcode"):
+        for sample in picked:
+            if sample not in genus_sets:
+                st.markdown(f"**{sample}** — no data")
+                continue
+            others = set.union(
+                *(genus_sets[b] for b in picked if b != sample and b in genus_sets)
+            )
+            unique = genus_sets[sample] - others
+            preview = ", ".join(sorted(unique)[:25]) if unique else "—"
+            st.markdown(f"**{sample}** ({len(unique)}): {preview}")
+
+    chart_rows = []
+    for sample in picked:
+        tsv = blast_tsv_path(sample, cmp_mode)
+        if not os.path.isfile(tsv):
+            continue
+        df = load_blast_table(tsv, os.path.getmtime(tsv))
+        if df.empty or "Genus" not in df.columns:
+            continue
+        for genus, n in df["Genus"].value_counts().head(10).items():
+            chart_rows.append(
+                {"Barcode": sample, "Genus": str(genus), "Clusters": int(n)}
+            )
+
+    if chart_rows:
+        st.markdown("**Top genera per barcode**")
+        chart_df = pd.DataFrame(chart_rows)
+        fig = px.bar(
+            chart_df,
+            x="Genus",
+            y="Clusters",
+            color="Barcode",
+            barmode="group",
+            title=f"Top genera · {cmp_mode} BLAST set",
+        )
+        fig.update_layout(**PLOTLY_LAYOUT, height=420, xaxis_tickangle=-35)
+        st.plotly_chart(fig, width="stretch")
+
+    # Strict vs full cluster counts for same barcodes (optional insight)
+    if st.checkbox("Show strict vs full cluster counts", value=False, key="mafft_cmp_dual"):
+        dual_rows = []
+        for sample in picked:
+            dual_rows.append(
+                {
+                    "Barcode": sample,
+                    "strict": preflight_stats(sample, "strict")["n_tsv"],
+                    "full": preflight_stats(sample, "full")["n_tsv"],
+                }
+            )
+        dual = pd.DataFrame(dual_rows)
+        st.dataframe(dual, hide_index=True, width="stretch")
+        melt = dual.melt(id_vars=["Barcode"], var_name="Set", value_name="Clusters")
+        fig2 = px.bar(
+            melt,
+            x="Barcode",
+            y="Clusters",
+            color="Set",
+            barmode="group",
+            title="Clusters per barcode · strict vs full",
+        )
+        fig2.update_layout(**PLOTLY_LAYOUT, height=360)
+        st.plotly_chart(fig2, width="stretch")
+
+
+def show_mafft_page() -> None:
     page_hero(
         "Multiple Sequence Alignment (MAFFT)",
-        "Align consensuses chosen by BLAST — strict (high/medium) or full tables per barcode",
+        "BLAST-driven sequence sets per barcode · strict or full · run, curate, and view",
     )
 
     samples = list_blast_samples()
     if not samples:
         st.warning("No BLAST summaries in `blast_results/`. Run BLAST before MAFFT.")
         return
-
-    if "confirmed_seqs" not in st.session_state:
-        st.session_state.confirmed_seqs = []
-    if "basket" not in st.session_state:
-        st.session_state.basket = set()
 
     top1, top2 = st.columns([2, 1])
     with top1:
@@ -80,246 +820,46 @@ def show_mafft_page():
             key="mafft_blast_mode",
         )
     with top2:
-        tsv = blast_tsv_path(sample, blast_mode)
-        n_blast = count_tsv_clusters(tsv)
-        st.metric("Clusters in TSV", n_blast)
-        st.caption("strict" if blast_mode == "strict" else "full")
+        stats = preflight_stats(sample, blast_mode)
+        st.metric("In alignment", "✓" if stats["has_raw"] else "—")
+        st.caption(
+            f"{'trimmed available' if stats['has_trimmed'] else 'raw only'}"
+            if stats["has_raw"]
+            else "not run yet"
+        )
+
+    tsv_path = blast_tsv_path(sample, blast_mode)
+    df = (
+        load_blast_table(tsv_path, os.path.getmtime(tsv_path))
+        if os.path.isfile(tsv_path)
+        else pd.DataFrame()
+    )
 
     paths = alignment_paths(sample, blast_mode)
-    alignment_choice = st.radio(
-        "Alignment to view",
-        ["Raw (MAFFT)", "Trimmed (trimAl)"],
-        horizontal=True,
-        key="mafft_view_type",
+    tab_run, tab_sets, tab_view, tab_compare = st.tabs(
+        ["Run", "Sequence sets", "View", "Compare barcodes"]
     )
-    fasta_path = paths["raw"] if alignment_choice.startswith("Raw") else paths["trimmed"]
 
-    with st.container(border=True):
-        st.markdown("**Run MAFFT**")
-        st.caption(
-            "Builds one alignment per barcode from clusters listed in the selected BLAST table. "
-            "Uses faster MAFFT settings for large sets (>200 / >1000 sequences)."
+    with tab_run:
+        render_run_tab(sample, blast_mode)
+
+    with tab_sets:
+        selected = render_sets_tab(sample, blast_mode, df)
+
+    with tab_view:
+        align_type = st.radio(
+            "Alignment file",
+            ["Raw (MAFFT)", "Trimmed (trimAl)"],
+            horizontal=True,
+            key="mafft_view_type",
         )
-        c1, c2, c3 = st.columns(3)
-        if c1.button("This sample only", type="primary", key="mafft_run_one"):
-            subprocess.run(
-                ["bash", MAFFT_SCRIPT, sample, blast_mode],
-                check=False,
-            )
-            st.rerun()
-        if c2.button("All samples (strict + full)", key="mafft_run_all"):
-            subprocess.run(["bash", MAFFT_SCRIPT, "--all", "both"], check=False)
-            st.rerun()
-        if c3.button("All samples (current set only)", key="mafft_run_all_mode"):
-            subprocess.run(
-                ["bash", MAFFT_SCRIPT, "--all", blast_mode],
-                check=False,
-            )
-            st.rerun()
-
-    if os.path.isfile(MANIFEST):
-        try:
-            manifest = pd.read_csv(MANIFEST, sep="\t")
-            row = manifest[
-                (manifest["sample"] == sample) & (manifest["mode"] == blast_mode)
-            ]
-            if not row.empty:
-                st.success(
-                    f"Latest run: **{int(row.iloc[-1]['n_seqs'])}** sequences aligned."
-                )
-        except Exception:
-            pass
-
-    st.markdown("---")
-    if os.path.exists(fasta_path):
-        st.caption(f"Viewing `{os.path.basename(fasta_path)}`")
-        visualize_mafft_alignment(fasta_path)
-    else:
-        st.info(
-            f"No alignment file yet at `{fasta_path}`. "
-            f"Run MAFFT above (needs ≥2 FASTAs matching the BLAST table)."
-        )
-        legacy = "/data/intermediate_data/mafft_alignment.fasta"
-        if os.path.exists(legacy):
-            with st.expander("Legacy global alignment (pre-BLAST MAFFT)"):
-                visualize_mafft_alignment(legacy)
-
-
-def visualize_mafft_alignment(alignment_fasta_path):
-    colors = {
-        'A': "#9F1B12", 'T': "#13781b", 'C': "#3c82d8", 'G': "#dea023", 'N': "#7A7A7A"
-    }
-    
-    sequences = {}
-    current_seq = ""
-    
-    with open(alignment_fasta_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith('>'):
-                current_seq = line[1:]
-                sequences[current_seq] = ""
-            else:
-                sequences[current_seq] += line.upper()
-
-    if not sequences:
-        st.error("The alignment file is empty.")
-        return
-
-    seq_ids = list(sequences.keys())
-    aln_length = max(len(seq) for seq in sequences.values())
-
-    st.subheader("Alignment Viewer Controls")
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        all_barcodes = []
-        for seq in seq_ids:
-            match = re.search(r'(barcode\d+)', seq.lower())
-            if match:
-                bc = match.group(1)
-                if bc not in all_barcodes:
-                    all_barcodes.append(bc)
-        
-        dominant_clusters = []
-        seen_barcodes = set()
-        for seq in seq_ids:
-            match = re.search(r'(barcode\d+)', seq.lower())
-            if match:
-                bc = match.group(1)
-                if bc not in seen_barcodes:
-                    seen_barcodes.add(bc)
-                    dominant_clusters.append(seq)
-
-        selected_barcodes = st.multiselect(
-            "Filter by Barcode (Optional):",
-            options=sorted(all_barcodes)
+        fasta_path = paths["raw"] if align_type.startswith("Raw") else paths["trimmed"]
+        render_view_tab(
+            fasta_path,
+            st.session_state.get(selection_key(sample, blast_mode), selected),
+            sample,
+            blast_mode,
         )
 
-        if selected_barcodes:
-            available_seqs = [seq for seq in seq_ids if any(bc in seq.lower() for bc in selected_barcodes)]
-            base_default = available_seqs[:20]
-        else:
-            available_seqs = seq_ids
-            base_default = dominant_clusters[:15] if dominant_clusters else seq_ids[:15]
-
-        if not st.session_state.confirmed_seqs and not st.session_state.basket:
-            st.session_state.confirmed_seqs = base_default
-
-        for seq in available_seqs:
-            if f"chk_{seq}" not in st.session_state:
-                st.session_state[f"chk_{seq}"] = (seq in base_default)
-
-        st.markdown("**Select from list:**")
-        def set_all_checkboxes(state):
-            for s in available_seqs:
-                st.session_state[f"chk_{s}"] = state
-
-        btn_col1, btn_col2 = st.columns(2)
-        btn_col1.button("Select All", on_click=set_all_checkboxes, args=(True,), use_container_width=True)
-        btn_col2.button("Clear All", on_click=set_all_checkboxes, args=(False,), use_container_width=True)
-
-        current_selections = []
-        with st.container(height=250):
-            for seq in available_seqs:
-                if st.checkbox(seq, key=f"chk_{seq}"):
-                    current_selections.append(seq)
-
-        st.markdown("---")
-
-        st.markdown("**Quick Add / Basket:**")
-        basket_input = st.text_area(
-            "Paste sequence IDs here:", 
-            height=68, 
-            label_visibility="collapsed", 
-            placeholder="Paste copied sequence names here..."
-        )
-        
-        if st.button("➕ Add to Basket", use_container_width=True):
-            if basket_input:
-                raw_ids = re.split(r'[,\n\s]+', basket_input)
-                valid_ids = [s.strip() for s in raw_ids if s.strip() in sequences]
-                if valid_ids:
-                    for vid in valid_ids:
-                        st.session_state.basket.add(vid)
-                    st.rerun()
-                else:
-                    st.error("No valid IDs found. Make sure you copied them correctly.")
-
-        if st.session_state.basket:
-            with st.container(border=True):
-                st.markdown("<span style='color:#888; font-size: 13px;'>Items currently in Basket:</span>", unsafe_allow_html=True)
-                for b_seq in sorted(list(st.session_state.basket)):
-                    c1, c2 = st.columns([5, 1])
-                    c1.code(b_seq)
-                    if c2.button("✖", key=f"del_{b_seq}", help="Remove from basket"):
-                        st.session_state.basket.remove(b_seq)
-                        st.rerun()
-                
-                if st.button("Clear Basket", use_container_width=True):
-                    st.session_state.basket.clear()
-                    st.rerun()
-
-        st.markdown("---")
-  
-        if st.button("Update Alignment", type="primary", use_container_width=True):
-            st.session_state.confirmed_seqs = current_selections
-            st.rerun()
-
-    combined_seqs = list(set(st.session_state.confirmed_seqs) | st.session_state.basket)
-
-    with col2:
-        start_pos, end_pos = st.slider(
-            "4. Select Alignment Region (bp):",
-            1, aln_length, (1, min(500, aln_length))
-        )
-        highlight_mutations = st.checkbox("Highlight mutations only", value=True)
-        st.info(f"Displaying: **{len(combined_seqs)}** sequences.")
-
-    selected_seqs = [s for s in combined_seqs if s in sequences]
-    
-    if not selected_seqs:
-        st.warning("Please select sequences from the list or add them to the basket.")
-        return
-
-    window_seqs = [sequences[seq_id][start_pos-1:end_pos] for seq_id in selected_seqs]
-    consensus_slice = ""
-    for i in range(end_pos - start_pos + 1):
-        col_bases = [s[i] for s in window_seqs if i < len(s)]
-        if not col_bases:
-            consensus_slice += "-"
-        else:
-            consensus_slice += Counter(col_bases).most_common(1)[0][0]
-
-    # RENDERING HTML
-    st.markdown("---")
-    html_out = "<div class='aln-container'>"
-    
-    html_out += f"<div class='aln-pos'><strong class='sticky-label'>{'Position':<35}</strong> [{start_pos} ... {end_pos}]</div>"
-
-    html_out += f"<div class='aln-consensus'><strong class='sticky-label'>{'CONSENSUS':<35}</strong> "
-    for char in consensus_slice:
-        cls = 'base gap' if char == '-' else 'base'
-        style = f"style='background-color: {colors.get(char, '#ffffff')}; font-weight: bold;'" if char != '-' else ""
-        html_out += f"<span class='{cls}' {style}>{char}</span>"
-    html_out += "</div>"
-
-    for seq_id in selected_seqs:
-        seq_slice = sequences[seq_id][start_pos-1:end_pos]
-        
-
-        html_out += f"<div class='aln-seq'><span class='copyable-seq sticky-label' contenteditable='true' spellcheck='false' title='Click once to select, then Ctrl+C'>{seq_id[:35]:<35}</span> "
-        for i, char in enumerate(seq_slice):
-            if char == '-':
-                html_out += f"<span class='base gap'>-</span>"
-            elif highlight_mutations and i < len(consensus_slice) and char == consensus_slice[i]:
-                html_out += f"<span class='base match-dot'>.</span>"
-            else:
-                html_out += f"<span class='base' style='background-color: {colors.get(char, '#ffffff')};'>{char}</span>"
-        html_out += "</div>"
-    
-    html_out += "</div>"
-    
-    with st.container(border=True):
-        st.markdown(html_out, unsafe_allow_html=True)
+    with tab_compare:
+        render_compare_tab(samples)
