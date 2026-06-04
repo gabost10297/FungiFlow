@@ -29,11 +29,8 @@ tree$node.label <- as.character(tree$node.label)
 tip_size <- if (num_tips > 80) 1.0 else if (num_tips > 40) 1.3 else 1.8
 support_cutoff <- 70
 
-# Safe bootstrap / SH-aLRT labels (avoid empty-string tests inside aes())
-node_subset <- quote(!is.na(as.numeric(label)) & as.numeric(label) >= support_cutoff)
-
 if (layout == "circular") {
-  p <- ggtree(tree, layout = "circular", open = TRUE, linewidth = 0.25) +
+  p <- ggtree(tree, layout = "circular", open = TRUE, size = 0.25) +
     geom_tiplab2(
       aes(angle = angle),
       size = tip_size,
