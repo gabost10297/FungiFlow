@@ -94,7 +94,7 @@ n_genera <- length(unique(tip_df$genus))
 pal <- rep(fungi_colors, length.out = max(n_genera, 1))
 
 p_base <- function() {
-  ggtree(tree, aes(color = genus), size = 0.35, linewidth = 0.35) %<+% tip_df +
+  ggtree(tree, aes(color = genus), size = 0.35) %<+% tip_df +
     scale_color_manual(
       name = "Genus",
       values = pal,
