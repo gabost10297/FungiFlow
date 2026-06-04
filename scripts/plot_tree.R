@@ -98,19 +98,8 @@ tip_df <- load_tip_meta(tree)
 n_genera <- length(unique(tip_df$genus))
 pal <- rep(fungi_colors, length.out = max(n_genera, 1))
 
-p_base <- function(tree_layout = "rectangular", open_angle = 0) {
-  tree_plot <- if (tree_layout == "fan") {
-    ggtree(
-      tree,
-      layout = "fan",
-      open.angle = open_angle,
-      aes(color = genus),
-      size = 0.35
-    )
-  } else {
-    ggtree(tree, aes(color = genus), size = 0.35)
-  }
-  tree_plot %<+% tip_df +
+p_base <- function() {
+  ggtree(tree, aes(color = genus), size = 0.35) %<+% tip_df +
     scale_color_manual(
       name = "Genus",
       values = pal,
@@ -119,11 +108,19 @@ p_base <- function(tree_layout = "rectangular", open_angle = 0) {
     guides(color = guide_legend(override.aes = list(size = 3, linewidth = 1)))
 }
 
-# Fan layout: radial segments + circular arcs (~3/4 circle with a gap).
-fan_open_angle <- 90
+# Fan: open_tree() leaves an empty sector (not a full 360° ring).
+fan_open_angle <- 120
 
 if (layout == "circular") {
-  p <- p_base(tree_layout = "fan", open_angle = fan_open_angle) +
+  p <- ggtree(tree, layout = "circular", aes(color = genus), size = 0.35) %<+% tip_df +
+    scale_color_manual(
+      name = "Genus",
+      values = pal,
+      na.value = "#7A7A7A"
+    ) +
+    guides(color = guide_legend(override.aes = list(size = 3, linewidth = 1)))
+  p <- open_tree(p, angle = fan_open_angle)
+  p <- p +
     geom_tiplab2(
       aes(label = tip_label, color = genus, angle = angle),
       size = tip_size,
@@ -197,4 +194,9 @@ if (layout == "circular") {
   ggsave(pdf_output, plot = p, width = 14, height = plot_height, bg = "white", limitsize = FALSE)
 }
 
-message("Wrote ", output_image, " (", layout, ", ", num_tips, " tips)")
+fan_note <- if (layout == "circular") {
+  paste0("fan open=", fan_open_angle)
+} else {
+  layout
+}
+message("Wrote ", output_image, " (", fan_note, ", ", num_tips, " tips)")

@@ -119,10 +119,15 @@ def count_fasta_seqs(path: str) -> int:
         return sum(1 for line in f if line.startswith(">"))
 
 
-def render_tree_plot(treefile: str, layout: str) -> str:
+def render_tree_plot(treefile: str, layout: str, *, force: bool = False) -> str:
     """Run R script; return path to PNG."""
     assets = tree_asset_paths(treefile)
     out_png = assets["circ_png"] if layout == "circular" else assets["rect_png"]
+    out_pdf = out_png.replace(".png", ".pdf")
+    if force:
+        for path in (out_png, out_pdf):
+            if os.path.isfile(path):
+                os.remove(path)
     meta_csv = build_tip_metadata_csv(treefile)
     cmd = ["Rscript", R_SCRIPT, treefile, out_png, layout]
     if meta_csv:
@@ -266,7 +271,7 @@ def render_explorer() -> str | None:
     if c2.button("Regenerate both layouts", width="stretch"):
         for layout in ("rectangular", "circular"):
             try:
-                render_tree_plot(treefile, layout)
+                render_tree_plot(treefile, layout, force=True)
                 st.success(f"Updated {layout} plot.")
             except subprocess.CalledProcessError as exc:
                 st.error(exc.stderr or str(exc))
