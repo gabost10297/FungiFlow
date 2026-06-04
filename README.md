@@ -109,9 +109,9 @@ For stable clustering on larger runs, create `%USERPROFILE%\.wslconfig`:
 
 ```ini
 [wsl2]
-memory=8GB
+memory=16GB
 processors=6
-swap=8GB
+swap=16GB
 ```
 
 Restart WSL after editing (`wsl --shutdown` in PowerShell).
