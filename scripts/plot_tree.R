@@ -24,33 +24,25 @@ if (!file.exists(tree_file)) {
 
 tree <- read.tree(tree_file)
 num_tips <- length(tree$tip.label)
+tree$node.label <- as.character(tree$node.label)
 
 tip_size <- if (num_tips > 80) 1.0 else if (num_tips > 40) 1.3 else 1.8
 support_cutoff <- 70
 
-node_support <- function(tree) {
-  if (is.null(tree$node.label)) {
-    return(rep(NA_real_, Nnode(tree)))
-  }
-  suppressWarnings(as.numeric(tree$node.label))
-}
-
-tree$node.label <- as.character(tree$node.label)
+# Safe bootstrap / SH-aLRT labels (avoid empty-string tests inside aes())
+node_subset <- quote(!is.na(as.numeric(label)) & as.numeric(label) >= support_cutoff)
 
 if (layout == "circular") {
-  p <- ggtree(tree, layout = "circular", open = TRUE, size = 0.25) +
+  p <- ggtree(tree, layout = "circular", open = TRUE, linewidth = 0.25) +
     geom_tiplab2(
       aes(angle = angle),
       size = tip_size,
       color = "#0a160a",
       align = TRUE,
-      linesize = 0.15
+      linewidth = 0.15
     ) +
-    geom_nodelab2(
-      aes(
-        subset = !is.na(label) & label != "" & suppressWarnings(as.numeric(label)) >= support_cutoff,
-        label = label
-      ),
+    geom_nodelab(
+      aes(subset = !is.na(as.numeric(label)) & as.numeric(label) >= support_cutoff),
       size = 1.2,
       color = "#1b4332"
     ) +
@@ -73,12 +65,10 @@ if (layout == "circular") {
   plot_height <- max(8, num_tips * 0.18)
   x_max <- max(ggtree(tree)$data$x, na.rm = TRUE) * 1.35
 
-  p <- ggtree(tree, size = 0.35) +
+  p <- ggtree(tree, linewidth = 0.35) +
     geom_tiplab(size = tip_size, color = "#0a160a", offset = 0.002, align = TRUE) +
     geom_nodelab(
-      aes(
-        subset = !is.na(label) & label != "" & suppressWarnings(as.numeric(label)) >= support_cutoff
-      ),
+      aes(subset = !is.na(as.numeric(label)) & as.numeric(label) >= support_cutoff),
       size = 1.3,
       color = "#1b4332",
       hjust = -0.2
