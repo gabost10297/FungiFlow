@@ -556,9 +556,3 @@ If you use this pipeline, please cite the underlying tools and databases:
 - **MAFFT:** Katoh & Standley  
 - **IQ-TREE:** Nguyen et al.  
 - **ggtree:** Yu et al., *Methods in Ecology and Evolution*  
-
----
-
-## License
-
-Add a `LICENSE` file to the repository if not already present, then state the license terms in this section.
