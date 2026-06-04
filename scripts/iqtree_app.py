@@ -12,6 +12,76 @@ R_SCRIPT = "/data/scripts/plot_tree.R"
 IQTREE_THREADS = os.environ.get("IQTREE_THREADS", "AUTO")
 
 
+import re
+
+import pandas as pd
+
+from mafft_app import blast_tsv_path, load_blast_table, parse_taxonomy_from_species_name
+
+
+
+
+
+def tree_blast_context(treefile: str) -> tuple[str, str] | None:
+    """Parse sample + strict/full from IQ-TREE output name."""
+    base = os.path.basename(treefile)
+    match = re.match(
+        r"sample_(.+?)_(strict|full)_.+_trimmed\.fasta\.treefile$",
+        base,
+    )
+    if match:
+        return match.group(1), match.group(2)
+    return None
+
+
+def _tip_label_text(cluster: str, genus: str, species: str) -> str:
+    g = (genus or "").strip() or "Unknown"
+    sp = (species or "").strip()
+    if sp and sp.lower() not in g.lower():
+        return f"{cluster}\n{g} — {sp}"
+    return f"{cluster}\n{g}"
+
+
+def build_tip_metadata_csv(treefile: str) -> str | None:
+    """Write tip metadata for R (cluster, genus, species, multiline tip_label)."""
+    ctx = tree_blast_context(treefile)
+    if not ctx:
+        return None
+    sample, mode = ctx
+    tsv_path = blast_tsv_path(sample, mode)
+    if not os.path.isfile(tsv_path):
+        return None
+
+    df = load_blast_table(tsv_path, os.path.getmtime(tsv_path))
+    if df.empty or "Cluster_Name" not in df.columns:
+        return None
+
+    rows = []
+    for _, row in df.iterrows():
+        cluster = str(row["Cluster_Name"]).strip()
+        genus = str(row.get("Genus", "") or "").strip()
+        species = str(row.get("Species", "") or "").strip()
+        if (not genus or genus == "nan") and "Species_Name" in row:
+            parsed = parse_taxonomy_from_species_name(row.get("Species_Name"))
+            genus = parsed.get("Genus", genus) or genus
+            species = parsed.get("Species", species) or species
+        rows.append(
+            {
+                "cluster": cluster,
+                "genus": genus or "Unknown",
+                "species": species,
+                "tip_label": _tip_label_text(cluster, genus, species),
+            }
+        )
+
+    if not rows:
+        return None
+
+    csv_path = f"{treefile}.tip_meta.csv"
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    return csv_path
+
+
 def page_hero(title: str, subtitle: str) -> None:
     st.markdown(
         f'<div class="ff-page-hero"><h1>{title}</h1><p>{subtitle}</p></div>',
@@ -53,8 +123,12 @@ def render_tree_plot(treefile: str, layout: str) -> str:
     """Run R script; return path to PNG."""
     assets = tree_asset_paths(treefile)
     out_png = assets["circ_png"] if layout == "circular" else assets["rect_png"]
+    meta_csv = build_tip_metadata_csv(treefile)
+    cmd = ["Rscript", R_SCRIPT, treefile, out_png, layout]
+    if meta_csv:
+        cmd.append(meta_csv)
     subprocess.run(
-        ["Rscript", R_SCRIPT, treefile, out_png, layout],
+        cmd,
         check=True,
         capture_output=True,
         text=True,
