@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Render phylogenetic trees for FungiFlow (rectangular or circular).
+# Render phylogenetic trees for FungiFlow (rectangular or fan/circular).
 # Usage: Rscript plot_tree.R <treefile> <output.png> <layout> [tip_meta.csv]
 #   tip_meta.csv columns: cluster, genus, species, tip_label
 
@@ -98,8 +98,19 @@ tip_df <- load_tip_meta(tree)
 n_genera <- length(unique(tip_df$genus))
 pal <- rep(fungi_colors, length.out = max(n_genera, 1))
 
-p_base <- function() {
-  ggtree(tree, aes(color = genus), size = 0.35) %<+% tip_df +
+p_base <- function(tree_layout = "rectangular", open_angle = 0) {
+  tree_plot <- if (tree_layout == "fan") {
+    ggtree(
+      tree,
+      layout = "fan",
+      open.angle = open_angle,
+      aes(color = genus),
+      size = 0.35
+    )
+  } else {
+    ggtree(tree, aes(color = genus), size = 0.35)
+  }
+  tree_plot %<+% tip_df +
     scale_color_manual(
       name = "Genus",
       values = pal,
@@ -108,12 +119,16 @@ p_base <- function() {
     guides(color = guide_legend(override.aes = list(size = 3, linewidth = 1)))
 }
 
+# Fan layout: radial segments + circular arcs (~3/4 circle with a gap).
+fan_open_angle <- 90
+
 if (layout == "circular") {
-  p <- p_base() +
+  p <- p_base(tree_layout = "fan", open_angle = fan_open_angle) +
     geom_tiplab2(
       aes(label = tip_label, color = genus, angle = angle),
       size = tip_size,
       align = TRUE,
+      offset = 0.003,
       linewidth = 0.15,
       linecolor = "grey70"
     ) +
