@@ -1,7 +1,6 @@
 #!/usr/bin/env Rscript
 # Render phylogenetic trees for FungiFlow (rectangular or circular).
 # Usage: Rscript plot_tree.R <treefile> <output.png> <layout> [tip_meta.csv]
-#   layout: rectangular | circular
 #   tip_meta.csv columns: cluster, genus, species, tip_label
 
 suppressPackageStartupMessages({
@@ -31,7 +30,6 @@ tree$node.label <- as.character(tree$node.label)
 tip_size <- if (num_tips > 80) 0.9 else if (num_tips > 40) 1.1 else 1.5
 support_cutoff <- 70
 
-# FungiFlow palette (tips / branches by genus)
 fungi_colors <- c(
   "#1b4332", "#2d6a4f", "#40916c", "#52b788", "#74c69d", "#95d5b2",
   "#bc6c25", "#9b2226", "#4a6741", "#3d405b", "#81b29a", "#e07a5f",
@@ -39,49 +37,56 @@ fungi_colors <- c(
 )
 
 load_tip_meta <- function(tree) {
+  # ggtree %<+% joins on a single column named "label" — do not add a second one.
   tip_df <- data.frame(
-    cluster = tree$tip.label,
     label = tree$tip.label,
+    tip_label = tree$tip.label,
+    genus = "Unknown",
+    species = "",
     stringsAsFactors = FALSE
   )
-  tip_df$genus <- "Unknown"
-  tip_df$species <- ""
-  tip_df$tip_label <- tip_df$cluster
 
   if (!nzchar(meta_file) || !file.exists(meta_file)) {
-    return (tip_df)
+    return(tip_df)
   }
 
   meta <- read.csv(meta_file, stringsAsFactors = FALSE, check.names = FALSE)
   if (!"cluster" %in% names(meta)) {
-    return (tip_df)
+    return(tip_df)
   }
 
   meta$cluster <- as.character(meta$cluster)
-  rownames(meta) <- meta$cluster
+
+  match_cluster <- function(cid) {
+    if (cid %in% meta$cluster) {
+      return(cid)
+    }
+    hits <- meta$cluster[
+      meta$cluster == cid |
+        endsWith(cid, meta$cluster) |
+        endsWith(meta$cluster, cid)
+    ]
+    if (length(hits) > 0) {
+      return(hits[1])
+    }
+    NA_character_
+  }
 
   for (i in seq_len(nrow(tip_df))) {
-    cid <- tip_df$cluster[i]
-    hit <- cid
-    if (!cid %in% rownames(meta)) {
-      for (k in rownames(meta)) {
-        if (k == cid || endsWith(cid, k) || endsWith(k, cid)) {
-          hit <- k
-          break
-        }
-      }
+    cid <- tip_df$label[i]
+    hit <- match_cluster(cid)
+    if (is.na(hit)) {
+      next
     }
-    if (hit %in% rownames(meta)) {
-      m <- meta[hit, , drop = FALSE]
-      if ("tip_label" %in% names(m) && nzchar(m$tip_label[1])) {
-        tip_df$tip_label[i] <- m$tip_label[1]
-      }
-      if ("genus" %in% names(m) && nzchar(m$genus[1])) {
-        tip_df$genus[i] <- m$genus[1]
-      }
-      if ("species" %in% names(m) && nzchar(m$species[1])) {
-        tip_df$species[i] <- m$species[1]
-      }
+    row <- meta[meta$cluster == hit, , drop = FALSE][1, , drop = FALSE]
+    if ("tip_label" %in% names(row) && nzchar(row$tip_label[1])) {
+      tip_df$tip_label[i] <- row$tip_label[1]
+    }
+    if ("genus" %in% names(row) && nzchar(row$genus[1])) {
+      tip_df$genus[i] <- row$genus[1]
+    }
+    if ("species" %in% names(row) && nzchar(row$species[1])) {
+      tip_df$species[i] <- row$species[1]
     }
   }
 
@@ -177,4 +182,4 @@ if (layout == "circular") {
   ggsave(pdf_output, plot = p, width = 14, height = plot_height, bg = "white", limitsize = FALSE)
 }
 
-message("Wrote ", output_image, " (", layout, ", ", num_tips, " tips, colored by genus)")
+message("Wrote ", output_image, " (", layout, ", ", num_tips, " tips)")
